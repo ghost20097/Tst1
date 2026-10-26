@@ -1,139 +1,110 @@
 --[[===========================================================
-   VENICE BONECA v7.1  - TUDO INTEGRADO
+   VENICE BONECA v8.0  -  R15 + CAIMENTO
    -----------------------------------------------------------
-   NOVO NESTA VERSAO:
-     + 22 posicoes novas (deitadas, por cima, de pe, oral, extras)
-     + Alvos novos: seios, maos, pes, coxa
-     + Ejaculacao com destino (dentro/fora/rosto/bunda/boca/seios)
-     + Experiencia 0-3 (virgem -> safada): falas, ritmo, resistencia
-     + Fadiga/stamina: ela cansa e recupera
-     + Brutalidade (0-2): mais amplitude, som e marcas
-     + Sliders de corpo: seio / bunda / cintura
-     + Roupas extras: lingerie, meia-calca, uniforme, cosplay
-     + Props: vibrador, plug, coleira, bola
-     + Modo espectador e modo cinematico (camera)
-     + Auto-ritmo (ondas de velocidade)
+   CORRECOES DESTA VERSAO
+     [A] BUG "invalid argument #1 (CFrame expected, got Vector3)"
+         As juntas (OmbroJ / QuadrilJ) passavam Vector3 no
+         parametro C0 do peca(). Agora peca() aceita os dois,
+         e as chamadas passam CFrame.
+     [B] BUG "attempt to index nil with 'C0'"
+         pp() em criarPica devolvia so a Part, entao
+         precumW era nil. Agora devolve Part + Weld.
 
-   MANTIDO DA v7.0:
-     - correcao do bug que destruia a boneca local
-     - boneca remota nasce na frente do jogador remoto
-     - relay de rede no servidor
-     - Color3:Lerp, CFG, keybind, save/load, banner
+   NOVIDADES
+     [C] CAIMENTO (peito e bunda meio caidos) com slider
+     [D] Boneca R15: nomes R15, Humanoid R15 e proporcoes
+         de avatar (pernas 1.38+1.26, bracos 1.34+1.26,
+         altura igual ao seu personagem).
+     [E] Aba CORPO nova: caimento, tamanho de peito/bunda
+         e largura de quadril, tudo ao vivo.
 ===========================================================]]
 
 print("[VB] 1 - iniciando")
 
-local Players     = game:GetService("Players")
-local RunService  = game:GetService("RunService")
-local UIS         = game:GetService("UserInputService")
-local Debris      = game:GetService("Debris")
-local SoundServ   = game:GetService("SoundService")
-local RS          = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
-local WS          = workspace
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS        = game:GetService("UserInputService")
+local Debris     = game:GetService("Debris")
+local SoundServ  = game:GetService("SoundService")
+local RS         = game:GetService("ReplicatedStorage")
+local WS         = workspace
 
-local IS_SERVER = RunService:IsServer()
 local LP = Players.LocalPlayer
-if not LP and not IS_SERVER then
-    LP = Players:GetPlayers()[1]
-    warn("[VB] LocalPlayer nil - rode como LocalScript")
-end
+if not LP then LP = Players:GetPlayers()[1]; warn("[VB] LocalPlayer nil") end
 
 local IDENT = CFrame.new()
 local rad, sin, cos, abs, pi, acos, atan2, sqrt, deg =
-    math.rad, math.sin, math.cos, math.abs, math.pi, math.acos, math.atan2, math.sqrt, math.deg
+      math.rad, math.sin, math.cos, math.abs, math.pi, math.acos, math.atan2, math.sqrt, math.deg
 local clamp, rnd = math.clamp, math.random
-
 local function P(x,y,z) return CFrame.Angles(rad(x or 0), rad(y or 0), rad(z or 0)) end
+local function lerp(a,b,t) return a+(b-a)*t end
+local function clc(a,b,t) return Color3.new(lerp(a.R,b.R,t), lerp(a.G,b.G,t), lerp(a.B,b.B,t)) end
 local function aprox(a,b,r,dt) return a+(b-a)*math.min(1,r*dt) end
 local function V3(x,y,z) return Vector3.new(x or 0,y or 0,z or 0) end
-local function clc(a,b,t) return a:Lerp(b, clamp(t,0,1)) end
-
---==================== CONFIG ====================
-local CFG = {
-    DIST_SPAWN   = 3.0,
-    ALT_QUADRIL  = 2.40,
-    TECLA        = Enum.KeyCode.RightShift,
-    MAX_GOTAS    = 90,
-    MAX_POCAS    = 60,
-    MAX_MARCAS   = 60,
-    MAX_REMOTOS  = 20,
-    SALVAR_CFG   = true,
-    ARQ_CFG      = "venice_boneca_cfg.json",
-}
-
-local function logErr(onde, err)
-    local m = "[VB] ERRO em "..onde..": "..tostring(err)
-    warn(m); print(m)
-end
-local function chaoEm(x, z, y)
-    local res = WS:Raycast(V3(x,(y or 0)+3,z), V3(0,-60,0))
-    if res then return res.Position.Y end
-    return (y or 0) - 2.35
+local function logErr(o,e) local m="[VB] ERRO em "..o..": "..tostring(e); warn(m); print(m) end
+local function chaoEm(x,z,y)
+    local r = WS:Raycast(V3(x,(y or 0)+3,z), V3(0,-60,0))
+    return r and r.Position.Y or ((y or 0)-3.0)
 end
 
-local aviso, banner, construirRoupa, gozar, mijar, eventoRaiva, incharVulva, criarDollRemota
-local aplicarCorpo, criarProp, removerProp
-local RAIO_SEIO, RAIO_BUNDA = 0.46, 0.52
+local aviso, construirRoupa, gozar, mijar, eventoRaiva, incharVulva, criarDollRemota
+local RAIO_SEIO, RAIO_BUNDA = 0.44, 0.50
+
+-- PROPORCOES R15 (avatar padrao: HRP a 3 studs do chao)
+local LEN_COXA, LEN_CANELA     = 1.38, 1.26
+local LEN_BRACO, LEN_ANTEBRACO = 1.34, 1.26
+local ALT_QUADRIL              = 0.62
+local ALT_ROOT                 = 3.62          -- quadril a 3.0 do chao
+local PICA_BASE_Y, PICA_BASE_Z = -0.20, 0.06
 
 local COR = {
-    pele=Color3.fromRGB(238,197,175), peleBlush=Color3.fromRGB(247,165,156),
+    pele=Color3.fromRGB(240,201,178), peleBlush=Color3.fromRGB(248,166,157),
     mamilo=Color3.fromRGB(214,136,132), mamiloDuro=Color3.fromRGB(196,104,108),
-    areola=Color3.fromRGB(226,154,150), labio=Color3.fromRGB(203,134,138),
+    areola=Color3.fromRGB(228,158,152), labio=Color3.fromRGB(203,134,138),
     labioQuente=Color3.fromRGB(216,104,118), interno=Color3.fromRGB(214,116,128),
     clit=Color3.fromRGB(212,120,134), boca=Color3.fromRGB(203,112,118),
-    cabelo=Color3.fromRGB(46,30,38), pica=Color3.fromRGB(228,168,158),
-    glande=Color3.fromRGB(232,150,148), veia=Color3.fromRGB(212,142,138),
-    gota=Color3.fromRGB(250,252,255), leite=Color3.fromRGB(252,250,245),
-    mijo=Color3.fromRGB(255,240,150), olho=Color3.fromRGB(250,250,252),
-    iris=Color3.fromRGB(92,58,44),
+    cabelo=Color3.fromRGB(44,28,36), cabelo2=Color3.fromRGB(72,48,58),
+    pica=Color3.fromRGB(230,172,160), glande=Color3.fromRGB(233,148,146),
+    veia=Color3.fromRGB(210,140,136), gota=Color3.fromRGB(250,252,255),
+    leite=Color3.fromRGB(252,250,245), mijo=Color3.fromRGB(255,240,150),
+    olho=Color3.fromRGB(250,250,252), iris=Color3.fromRGB(96,62,46),
     blusa=Color3.fromRGB(255,170,200), sutia=Color3.fromRGB(250,244,248),
     calcinha=Color3.fromRGB(250,246,250), saia=Color3.fromRGB(58,44,72),
     marca=Color3.fromRGB(226,96,112), mordida=Color3.fromRGB(212,72,92),
-    -- extras
-    lingerie=Color3.fromRGB(40,30,48), renda=Color3.fromRGB(180,60,110),
-    meia=Color3.fromRGB(28,24,34), uniforme=Color3.fromRGB(240,240,248),
-    gravata=Color3.fromRGB(190,40,60), cosplay=Color3.fromRGB(60,40,60),
-    vibrador=Color3.fromRGB(255,110,190), plug=Color3.fromRGB(150,120,220),
-    coleira=Color3.fromRGB(38,30,44), bolaGag=Color3.fromRGB(228,60,92),
+    unha=Color3.fromRGB(250,225,230),
 }
 local SOM_IDS = {
     gemido={"rbxassetid://3768427778"}, estoc={"rbxassetid://9120386436"},
     squish={"rbxassetid://8971324398"}, gozo={"rbxassetid://3768427778"},
-    roupa={"rbxassetid://9120386436"}, vibra={"rbxassetid://8971324398"},
+    roupa={"rbxassetid://9120386436"},
 }
 
 local S = {
     sexo=false, picaOn=false, raiva=false,
     realJig=true, realResp=true, realSons=true, realSuor=true, realBlush=true,
     olhosSeguem=true, cabecaSegue=true, ikPes=true, netOn=true,
-    vergonhaOn=true, autoCobrir=true, autoMast=true, autoAvancar=true, autoCiclo=false,
-    autoRitmo=false,
+    vergonhaOn=true, autoCobrir=true, autoMast=true, autoAvancar=true,
     qual=2, volSom=0.6,
-    poseIdx=1, alvo="buceta", vel=5, amp=0.42,
+    poseIdx=1, alvo="buceta", vel=5, amp=0.30,
     tamPica=1, gross=1, picaY=0, ajY=0, ajZ=0,
+    -- CORPO
+    sag=0.55, tamPeito=1, tamBunda=1, largQuadril=1,
     tesao=0, gozadas=0, molhada=0, suor=0, blush=0, ereccao=0.18,
     resp=0, pisca=0, trem=0, contra=0, engasgo=0, prof=0,
     vergonha=0, maos="livre", falaT=0,
     olhoFechado=0, revirar=0, cabYaw=0, cabPitch=0,
     masturbando=false, visto=false, vistoHa=0, mastT=0, mastOrg=0,
     prelim=false, prelimT=0, beijo=0,
-    mordidaAlvo="ombro", netId=0, cicloT=0,
-    -- NOVOS
-    exp=1, stamina=1, rough=0, ejacAlvo="dentro",
-    sliderSeio=1, sliderBunda=1, sliderCintura=1,
-    cameraModo="livre", camAng=0, velEf=5, ampEf=0.42,
-    props={ vibrador=false, plug=false, coleira=false, bola=false }, propParts={},
-    -- refs
-    boneca=nil, jigs={}, peleParts={}, nips={}, clit=nil, canal=nil, seios={}, bundas={},
-    cintura=nil, cinturaBase=nil,
-    olhos={}, palpebras={}, marcas={}, remotos={},
-    pica=nil, picaWeld=nil, picaBase=nil, picaL=1, picaParts={}, precum=nil,
-    picaRaiz=nil, picaCabeca=nil,
-    gotas={}, pocoes={}, particulas={}, conns={}, aura=nil, cama=nil, roupa={},
-    dedos={}, caudas={},
+    mordidaAlvo="ombro", netId=0, poseAnt=1,
+    boneca=nil, jigs={}, peleParts={}, nips={}, clit=nil, canal=nil,
+    seios={}, bundas={}, olhos={}, palpebras={}, marcas={}, remotos={},
+    picaRaiz=nil, picaWeld=nil, picaBase=nil, picaL=1, picaParts={}, precum=nil,
+    precumW=nil, precumBase=nil, bocaInfW=nil, bocaInfBase=nil,
+    gotas={}, pocoes={}, particulas={}, conns={}, aura=nil, leito=nil, roupa={},
+    dedos={},
     babaT=0, cuspeT=0, autoT=0, mijaT=0, somT=0,
-    lastPos=nil, accSm=V3(), poseAnt=1,
+    ancoraPos=V3(), ancoraVel=V3(), ancoraOk=false,
+    lastPos=nil, accSm=V3(),
 }
 
 --==================== FALAS ====================
@@ -151,19 +122,8 @@ local GEM = {
     prelim={"vem~","chega mais~","me beija~","ai~","toca~","assim~","vem cá~","não para~","me abraça~","segura~"},
     beijo={"mmh~","chuac~","smack~","mwah~","mm~"},
     montar={"ai~","sobre~","ahh~","vou sentar~","uhn~","assim~","meu deus~"},
-    exp = {
-        [0]={"ai~ ai~","que isso~","tá grande~","devagar~","não aguento~","é muita coisa~"},
-        [1]={"assim~","gostoso~","continua~","ah~"},
-        [2]={"me fode~","fundo~","bate forte~","sou sua~","usa~"},
-        [3]={"acaba comigo~","me usa~","quero mais~","goza em mim~","me arromba~"},
-    },
 }
 local function pick(t) local l=GEM[t] or GEM.normal; return l[rnd(#l)] end
-local function pickExp()
-    local l = GEM.exp[S.exp] or GEM.exp[1]
-    if rnd() < 0.45 then return l[rnd(#l)] end
-    return pick("fala")
-end
 
 local function som(cat, vol, pmin, pmax)
     if not S.realSons then return end
@@ -175,12 +135,11 @@ local function som(cat, vol, pmin, pmax)
 end
 
 local function gemido(cat)
-    local cab = S.boneca and S.boneca.cabeca
-    if not (cab and cab.Parent) then return end
-    local txt = (cat=="fala") and pickExp() or pick(cat or "normal")
+    local txt = pick(cat or "normal")
     local bb = Instance.new("BillboardGui")
     bb.Size = UDim2.new(0,140,0,30); bb.AlwaysOnTop = true
-    bb.StudsOffset = V3((rnd()-0.5)*0.5, 2.9, 0); bb.Parent = cab
+    bb.StudsOffset = V3((rnd()-0.5)*0.5, 3.4, 0)
+    bb.Parent = (S.boneca and S.boneca.cabeca and S.boneca.cabeca.Parent) and S.boneca.cabeca or WS
     local l = Instance.new("TextLabel")
     l.Size=UDim2.new(1,0,1,0); l.BackgroundTransparency=1; l.Text=txt
     l.TextColor3 = cat=="mijo" and Color3.fromRGB(255,230,120)
@@ -188,7 +147,6 @@ local function gemido(cat)
     l.TextStrokeTransparency=0.45; l.TextScaled=true; l.Font=Enum.Font.GothamBold; l.Parent=bb
     task.spawn(function()
         for _=1,34 do
-            if not l.Parent then return end
             l.Position = l.Position - UDim2.new(0,0,0,0.6)
             l.TextTransparency = math.min(1, l.TextTransparency+0.03); task.wait(0.03)
         end
@@ -198,9 +156,11 @@ end
 
 --==================== PECAS ====================
 local function peca(nome, pai, c0, tam, cor, forma, rotExtra, mat)
+    if typeof(c0) == "Vector3" then c0 = CFrame.new(c0) end   -- [A] aceita os dois
     local p = Instance.new("Part")
     p.Name=nome; p.Shape=forma or Enum.PartType.Ball; p.Size=tam
     p.Color=cor or COR.pele; p.Material=mat or Enum.Material.SmoothPlastic
+    p.Reflectance = 0.02
     p.Anchored, p.CanCollide, p.Massless, p.CastShadow = false,false,true,false
     p.CanQuery, p.CanTouch = false,false
     p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
@@ -228,7 +188,7 @@ local function fazerPoca(pos, cor, raio)
     p.Color=cor; p.Material=Enum.Material.Glass; p.Transparency=0.2
     p.Anchored,p.CanCollide,p.CanQuery,p.CanTouch,p.CastShadow=true,false,false,false,false
     p.Parent=WS; S.pocoes[#S.pocoes+1]=p
-    if #S.pocoes>CFG.MAX_POCAS then local o=table.remove(S.pocoes,1) if o and o.Parent then o:Destroy() end end
+    if #S.pocoes>70 then local o=table.remove(S.pocoes,1) if o then o:Destroy() end end
     task.spawn(function()
         local t0=tick()
         while p.Parent and tick()-t0<16 do
@@ -245,7 +205,6 @@ local function fluido(pos, vel, cor, tam, viscoso)
     g.Color=cor; g.Material=Enum.Material.Glass; g.Transparency=0.06
     g.Anchored,g.CanCollide,g.CanQuery,g.CanTouch,g.CastShadow=true,false,false,false,false
     g.CFrame=CFrame.new(pos); g.Parent=WS; S.gotas[#S.gotas+1]=g
-    if #S.gotas>CFG.MAX_GOTAS then local o=table.remove(S.gotas,1) if o and o.Parent then o:Destroy() end end
     task.spawn(function()
         local p,v,t0,passo=pos,vel,tick(),0
         local dt=0.033
@@ -274,7 +233,7 @@ local function marca(pai, cf, tam, cor, dur)
     p.Parent=pai
     local w=Instance.new("Weld"); w.Part0,w.Part1=pai,p; w.C0=cf; w.Parent=pai
     S.marcas[#S.marcas+1]=p
-    if #S.marcas>CFG.MAX_MARCAS then local o=table.remove(S.marcas,1) if o and o.Parent then o:Destroy() end end
+    if #S.marcas>70 then local o=table.remove(S.marcas,1) if o then o:Destroy() end end
     task.spawn(function()
         task.wait(dur or 10)
         for _=1,22 do
@@ -297,13 +256,6 @@ local function mordida(pai, cf, raio, cor)
               V3(0.055,0.085,0.045), cor or COR.mordida, 15)
     end
     som("squish",0.4,1.35,1.65); gemido("fala")
-end
-local function manchaLeite(pai, cf, r)
-    for i=1,5 do
-        local a = rnd()*pi*2
-        marca(pai, cf*CFrame.new(cos(a)*r, sin(a)*r*0.7, 0), V3(0.10,0.10,0.05),
-              COR.leite, 12)
-    end
 end
 
 --==================== IK ====================
@@ -335,41 +287,158 @@ local function setIK(m1, m2, J, T, len1, len2, pole)
     m1.C0 = F1
     m2.C0 = CFrame.new(0, len1/2, 0) * F1:Inverse() * F2
 end
-local LEN_BRACO, LEN_ANTEBRACO = 0.78, 0.72
-local LEN_COXA,  LEN_CANELA    = 0.95, 0.90
 
 print("[VB] 2 - helpers ok")
 
---==================== BONECA ====================
-local function criarBoneca(baseCF)
-    if S.boneca and S.boneca.model and S.boneca.model.Parent then S.boneca.model:Destroy() end
-    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.marcas = {},{},{},{},{},{},{},{},{},{}
-    S.bundas,S.caudas,S.propParts = {},{},{}
+--==================== POSES ====================
+-- rot: yaw. IDENT = de costas pra voce / P(0,180,0) = de frente
+-- pica: inclinacao da pica (0 = horizontal, negativo = pra baixo)
+-- sup: offset Y do root ate a superficie de apoio (chao / cama)
+local POSES = {
+    { nome="De 4", rot=IDENT, ok={"buceta","bunda"}, pica=-22, sup=-3.054,
+      mot={ raiz=P(-85,0,0), cabeca=P(68,0,0),
+            bracoE=P(84,0,-14), bracoD=P(84,0,14),
+            cotoveloE=P(-12,0,0), cotoveloD=P(-12,0,0),
+            quadrilE=P(84,0,-13), quadrilD=P(84,0,13),
+            joelhoE=P(-24,0,0), joelhoD=P(-24,0,0) } },
 
-    local origem
-    if baseCF then origem = baseCF
+    { nome="Papai e Mamae", rot=P(0,180,0), ok={"buceta","bunda"}, pica=-28, sup=-0.42,
+      mot={ raiz=P(90,0,0), cabeca=P(-18,0,0),
+            bracoE=P(62,0,-28), bracoD=P(62,0,28),
+            cotoveloE=P(-42,0,0), cotoveloD=P(-42,0,0),
+            quadrilE=P(30,0,-16), quadrilD=P(30,0,16),
+            joelhoE=P(-72,0,0), joelhoD=P(-72,0,0) } },
+
+    { nome="Sentada", rot=P(0,180,0), ok={"buceta","bunda"}, pica=-43, sup=-0.93,
+      mot={ raiz=P(6,0,0), cabeca=P(-10,0,0),
+            bracoE=P(30,0,-22), bracoD=P(30,0,22),
+            cotoveloE=P(-52,0,0), cotoveloD=P(-52,0,0),
+            quadrilE=P(80,0,-20), quadrilD=P(80,0,20),
+            joelhoE=P(-78,0,0), joelhoD=P(-78,0,0) } },
+
+    { nome="Em pe", rot=P(0,180,0), ok={"buceta","bunda"}, pica=12, sup=-3.62, pes=true,
+      mot={ raiz=IDENT, cabeca=P(-6,0,0),
+            bracoE=P(20,0,-22), bracoD=P(20,0,22),
+            cotoveloE=P(-70,0,0), cotoveloD=P(-70,0,0),
+            quadrilE=P(2,0,-5), quadrilD=P(2,0,5),
+            joelhoE=P(-5,0,0), joelhoD=P(-5,0,0) } },
+
+    { nome="Sentada nele", rot=P(0,180,0), vertical=true, ok={"buceta"}, pica=90, sup=-2.45,
+      mot={ raiz=P(-6,0,0), cabeca=P(6,0,0),
+            bracoE=P(-14,0,-30), bracoD=P(-14,0,30),
+            cotoveloE=P(-58,0,0), cotoveloD=P(-58,0,0),
+            quadrilE=P(48,0,-34), quadrilD=P(48,0,34),
+            joelhoE=P(-92,0,0), joelhoD=P(-92,0,0) } },
+
+    { nome="Boquete", rot=P(0,180,0), oral=true, ok={"boca"}, pica=-14, sup=-1.94,
+      mot={ raiz=P(-25,0,0), cabeca=P(-20,0,0),
+            bracoE=P(50,0,-20), bracoD=P(50,0,20),
+            cotoveloE=P(-40,0,0), cotoveloD=P(-40,0,0),
+            quadrilE=P(25,0,-9), quadrilD=P(25,0,9),
+            joelhoE=P(-80,0,0), joelhoD=P(-80,0,0) } },
+
+    { nome="69", rot=P(0,180,0), oral=true, pivPica=true, ok={"boca"}, pica=-46, sup=-0.42,
+      mot={ raiz=P(90,0,0), cabeca=P(18,0,0),
+            bracoE=P(70,0,-30), bracoD=P(70,0,30),
+            cotoveloE=P(-30,0,0), cotoveloD=P(-30,0,0),
+            quadrilE=P(-10,0,-34), quadrilD=P(-10,0,34),
+            joelhoE=P(-60,0,0), joelhoD=P(-60,0,0) } },
+
+    { nome="Chupando ela", rot=IDENT, chupar=true, ok={"buceta"}, pica=0, sup=-0.42,
+      mot={ raiz=P(90,0,0), cabeca=P(-12,0,0),
+            bracoE=P(80,0,-26), bracoD=P(80,0,26),
+            cotoveloE=P(-26,0,0), cotoveloD=P(-26,0,0),
+            quadrilE=P(24,0,-18), quadrilD=P(24,0,18),
+            joelhoE=P(-66,0,0), joelhoD=P(-66,0,0) } },
+
+    { nome="No colo", rot=IDENT, ok={"buceta"}, pica=-26, sup=-3.11,
+      mot={ raiz=P(-70,0,0), cabeca=P(44,0,0),
+            bracoE=P(58,0,-16), bracoD=P(58,0,16),
+            cotoveloE=P(-34,0,0), cotoveloD=P(-34,0,0),
+            quadrilE=P(52,0,-26), quadrilD=P(52,0,26),
+            joelhoE=P(-70,0,0), joelhoD=P(-70,0,0) } },
+}
+local function acharPose(n) for i,p in ipairs(POSES) do if p.nome==n then return i end end end
+
+local function alvoLocal(pose, alvo)
+    local raiz = pose.mot.raiz or IDENT
+    if alvo=="boca" then
+        local cab = pose.mot.cabeca or IDENT
+        return raiz * CFrame.new(0,1.50,0) * cab * CFrame.new(0,0.34,-0.66)
+    elseif alvo=="bunda" then
+        return raiz * CFrame.new(0,-0.58,0.66)
     else
-        local char = LP and LP.Character
-        local hrpJ = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrpJ then return end
-        origem = hrpJ.CFrame
+        return raiz * CFrame.new(0,-0.60,-0.62)
     end
+end
 
-    local lv = origem.LookVector
-    local dirF = V3(lv.X,0,lv.Z); if dirF.Magnitude<0.01 then dirF=V3(0,0,-1) end; dirF=dirF.Unit
-    local px = origem.Position.X + dirF.X*CFG.DIST_SPAWN
-    local pz = origem.Position.Z + dirF.Z*CFG.DIST_SPAWN
-    local gy = chaoEm(px, pz, origem.Position.Y)
-    local base = CFrame.lookAt(V3(px, gy+CFG.ALT_QUADRIL, pz), V3(px, gy+CFG.ALT_QUADRIL, pz) - dirF)
+--==================== CAIMENTO / CORPO ====================
+local function cfSeioBase(lado)
+    local sg = S.sag
+    return CFrame.new(lado*0.38, 0.26 - sg*0.24, -0.46 + sg*0.03) * P(-16 - sg*26, lado*-14, lado*-14)
+end
+local function cfBundaBase(lado)
+    local sg = S.sag
+    return CFrame.new(lado*0.40, -0.68 - sg*0.12, 0.42 + sg*0.05) * P(12 + sg*14, lado*10, 0)
+end
+
+local function aplicarCorpo()
+    if not S.boneca then return end
+    local sg, tp, tb, lq = S.sag, S.tamPeito, S.tamBunda, S.QuadrilLargura or S.largQuadril
+    for _,s in ipairs(S.seios) do
+        if s.p.Parent then
+            local cf = cfSeioBase(s.lado)
+            s.baseCF = cf
+            if s.j then s.j.base = cf end
+            local esc = tp * (1 + sg*0.10)
+            s.base = V3(RAIO_SEIO*2.0*esc, RAIO_SEIO*1.95*esc*(1+sg*0.12), RAIO_SEIO*2.15*esc)
+            s.p.Size = s.base
+            if s.baixo and s.baixo.Parent then
+                s.baixo.Size = V3(RAIO_SEIO*1.7*esc*(1+sg*0.10), RAIO_SEIO*1.5*esc*(1+sg*0.18), RAIO_SEIO*1.9*esc)
+            end
+        end
+    end
+    for _,b in ipairs(S.bundas) do
+        if b.p.Parent then
+            local cf = cfBundaBase(b.lado)
+            if b.j then b.j.base = cf end
+            b.base = V3(RAIO_BUNDA*2.0*tb, RAIO_BUNDA*1.85*tb*(1+sg*0.14), RAIO_BUNDA*2.0*tb)
+            b.p.Size = b.base
+            if b.baixo and b.baixo.Parent then
+                b.baixo.Size = V3(RAIO_BUNDA*1.75*tb, RAIO_BUNDA*1.45*tb*(1+sg*0.20), RAIO_BUNDA*1.7*tb)
+            end
+        end
+    end
+    if S.boneca.quadrilPart and S.boneca.quadrilPart.Parent then
+        S.boneca.quadrilPart.Size = V3(1.94*lq, 0.50, 0.94*lq)
+    end
+end
+
+--==================== BONECA (R15) ====================
+local function criarBoneca()
+    if S.boneca and S.boneca.model.Parent then S.boneca.model:Destroy() end
+    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.bundas,S.marcas =
+        {},{},{},{},{},{},{},{},{},{},{}
+    local char = LP and LP.Character; if not char then return end
+    local hrpJ = char:FindFirstChild("HumanoidRootPart"); if not hrpJ then return end
 
     local model = Instance.new("Model"); model.Name="VeniceBoneca"
+
+    local lv = hrpJ.CFrame.LookVector
+    local dirF = V3(lv.X,0,lv.Z); if dirF.Magnitude<0.01 then dirF=V3(0,0,-1) end; dirF=dirF.Unit
+    local px = hrpJ.Position.X + dirF.X*3.0
+    local pz = hrpJ.Position.Z + dirF.Z*3.0
+    local gy = chaoEm(px, pz, hrpJ.Position.Y)
+    local base = CFrame.lookAt(V3(px, gy+ALT_ROOT, pz), V3(px, gy+ALT_ROOT, pz) - dirF)
+
     local cor = COR.pele
+    local sg = S.sag
     local r, rb = RAIO_SEIO, RAIO_BUNDA
 
     local function parte(nome, size, cf, c, forma, trans)
         local p = Instance.new("Part")
         p.Name=nome; p.Size=size; p.Color=c or cor
-        p.Material=Enum.Material.SmoothPlastic
+        p.Material=Enum.Material.SmoothPlastic; p.Reflectance=0.02
         p.Anchored,p.CanCollide,p.Massless,p.CastShadow=false,false,true,false
         p.CanQuery,p.CanTouch=false,false
         p.Shape=forma or Enum.PartType.Block
@@ -378,52 +447,65 @@ local function criarBoneca(baseCF)
         return p
     end
 
-    local hrp = parte("HRP", V3(1.6,1.6,1.0), base, cor, nil, 1); hrp.Anchored = true
-    local tronco = parte("Tronco", V3(1.6,1.6,1.0), base, cor, nil, 1)
-    local cabeca = parte("Cabeca", V3(1.42,1.5,1.5), base*CFrame.new(0,1.65,0), cor, Enum.PartType.Ball)
+    local hrp    = parte("HumanoidRootPart", V3(2.0,2.0,1.0), base, cor, nil, 1); hrp.Anchored = true
+    local tronco = parte("UpperTorso", V3(1.6,1.6,1.0), base, cor, nil, 1)
+    local cabeca = parte("Head", V3(1.36,1.42,1.42), base*CFrame.new(0,1.55,0), cor, Enum.PartType.Ball)
 
     local M = {}
-    M.raiz = motor("RootJoint", hrp, tronco, IDENT, IDENT)
-    M.cabeca = motor("Neck", tronco, cabeca, CFrame.new(0,1.05,0), CFrame.new(0,-0.6,0))
+    M.raiz   = motor("Root", hrp, tronco, IDENT, IDENT)
+    M.cabeca = motor("Neck", tronco, cabeca, CFrame.new(0,0.98,0), CFrame.new(0,-0.52,0))
 
     local function skin(nome,pai,c0,tam,c2,forma,extra,f)
         local p,w = peca(nome,pai,c0,tam,c2 or cor,forma,extra); pele(p,f or 1); return p,w
     end
 
-    skin("Cintura", tronco, CFrame.new(0,0.02,0), V3(1.32,0.52,0.86))
-    skin("Costelas", tronco, CFrame.new(0,0.52,0), V3(1.72,0.78,0.94))
-    skin("Ombros", tronco, CFrame.new(0,0.86,0), V3(1.86,0.30,0.88))
-    skin("Barriga", tronco, CFrame.new(0,-0.22,-0.02), V3(1.42,0.62,0.86))
-    skin("Quadril", tronco, CFrame.new(0,-0.52,0), V3(1.96,0.52,0.96))
-    skin("Pescoco", tronco, CFrame.new(0,1.02,0), V3(0.55,0.34,0.55))
-    S.cintura = tronco:FindFirstChild("Cintura")
-    if S.cintura then S.cinturaBase = S.cintura.Size end
+    skin("Cintura",  tronco, CFrame.new(0,-0.16,0), V3(1.24,0.42,0.82))
+    skin("Barriga",  tronco, CFrame.new(0,-0.40,-0.03), V3(1.34,0.40,0.84))
+    skin("Costelas", tronco, CFrame.new(0,0.22,0),  V3(1.56,0.78,0.90))
+    skin("Peito",    tronco, CFrame.new(0,0.56,0),  V3(1.68,0.52,0.92))
+    skin("ClaviculaE", tronco, CFrame.new(-0.48,0.78,-0.34), V3(0.62,0.13,0.16))
+    skin("ClaviculaD", tronco, CFrame.new( 0.48,0.78,-0.34), V3(0.62,0.13,0.16))
+    skin("Ombros",   tronco, CFrame.new(0,0.80,0),  V3(1.76,0.30,0.86))
+    local quadrilP  = skin("LowerTorso", tronco, CFrame.new(0,-0.62,0), V3(1.94,0.50,0.94))
+    skin("Pescoco",  tronco, CFrame.new(0,0.96,0),  V3(0.52,0.34,0.52))
+    peca("Umbigo",   tronco, CFrame.new(0,-0.34,-0.44), V3(0.11,0.13,0.08), Color3.fromRGB(214,168,152))
 
+    -- seios com caimento
     for _,lado in ipairs({-1,1}) do
-        local cf = CFrame.new(lado*0.40, 0.30, -0.50) * P(-14, lado*-13, lado*-13)
-        local seio, wS = peca("Seio", tronco, cf, V3(r*2.0,r*1.95,r*2.2), cor)
-        pele(seio,1.2); jig(wS, cf, 78, 10.5, 1.0, 0.30)
-        local baixo = peca("SeioBaixo", seio, CFrame.new(0,-r*0.34,-r*0.06), V3(r*1.7,r*1.55,r*1.9), cor); pele(baixo,1.2)
-        peca("Areola", seio, CFrame.new(0,-r*0.06,-r*0.92), V3(r*0.88,r*0.88,r*0.22), COR.areola)
-        local bico = peca("Bico", seio, CFrame.new(0,-r*0.06,-r*1.02), V3(r*0.30,r*0.34,r*0.34), COR.mamilo, Enum.PartType.Cylinder, P(0,90,0))
+        local cf = cfSeioBase(lado)
+        local esc = S.tamPeito * (1 + sg*0.10)
+        local seio, wS = peca("Seio", tronco, cf, V3(r*2.0*esc, r*1.95*esc*(1+sg*0.12), r*2.15*esc), cor)
+        pele(seio,1.2)
+        local j = jig(wS, cf, 78, 10.5, 1.0, 0.30 + sg*0.10)
+        local baixo = peca("SeioBaixo", seio,
+            CFrame.new(0,-r*(0.36+sg*0.26),-r*0.04),
+            V3(r*1.7*esc*(1+sg*0.10), r*1.5*esc*(1+sg*0.18), r*1.9*esc), cor); pele(baixo,1.2)
+        peca("Areola", seio, CFrame.new(0,-r*(0.06+sg*0.10),-r*0.90), V3(r*0.84,r*0.84,r*0.22), COR.areola)
+        local bico = peca("Bico", seio, CFrame.new(0,-r*(0.06+sg*0.10),-r*1.00),
+                          V3(r*0.30,r*0.32,r*0.34), COR.mamilo, Enum.PartType.Cylinder, P(0,90,0))
         S.nips[#S.nips+1] = { p=bico, base=bico.Size, cor=COR.mamilo }
-        local ponta = peca("BicoPonta", seio, CFrame.new(0,-r*0.06,-r*1.17), V3(r*0.22,r*0.22,r*0.22), COR.mamilo)
+        local ponta = peca("BicoPonta", seio, CFrame.new(0,-r*(0.06+sg*0.10),-r*1.14),
+                           V3(r*0.22,r*0.22,r*0.22), COR.mamilo)
         S.nips[#S.nips+1] = { p=ponta, base=ponta.Size, cor=COR.mamilo }
-        S.seios[#S.seios+1] = { p=seio, base=seio.Size, w=wS, baseCF=cf, lado=lado }
+        S.seios[#S.seios+1] = { p=seio, baixo=baixo, base=seio.Size, w=wS, j=j, cfBase=cf, lado=lado }
     end
 
+    -- bunda com caimento
     for _,lado in ipairs({-1,1}) do
-        local cf = CFrame.new(lado*0.42,-0.58,0.42)*P(12,lado*10,0)
-        local g,wG = peca("Bunda", tronco, cf, V3(rb*2.0,rb*1.85,rb*2.0), cor)
-        pele(g,1.2); jig(wG, cf, 96, 12, 0.95, 0.26)
-        S.bundas[#S.bundas+1] = { p=g, base=g.Size }
-        local baixo = peca("BundaBaixo", g, CFrame.new(0,-rb*0.32,rb*0.05), V3(rb*1.75,rb*1.45,rb*1.7), cor); pele(baixo,1.2)
+        local cf = cfBundaBase(lado)
+        local g,wG = peca("Bunda", tronco, cf,
+            V3(rb*2.0*S.tamBunda, rb*1.85*S.tamBunda*(1+sg*0.14), rb*2.0*S.tamBunda), cor)
+        pele(g,1.2)
+        local j = jig(wG, cf, 96, 12, 0.95, 0.26 + sg*0.08)
+        local baixo = peca("BundaBaixo", g, CFrame.new(0,-rb*(0.32+sg*0.18),rb*0.05),
+            V3(rb*1.75*S.tamBunda, rb*1.45*S.tamBunda*(1+sg*0.20), rb*1.7*S.tamBunda), cor); pele(baixo,1.2)
+        S.bundas[#S.bundas+1] = { p=g, baixo=baixo, base=g.Size, w=wG, j=j, cfBase=cf, lado=lado }
     end
-    peca("Fenda", tronco, CFrame.new(0,-0.62,0.62), V3(0.11,0.86,0.34), COR.labio)
-    peca("FendaSup", tronco, CFrame.new(0,-0.30,0.50), V3(0.15,0.42,0.30), COR.labio)
+    peca("Fenda",    tronco, CFrame.new(0,-0.72,0.62), V3(0.11,0.86,0.34), COR.labio)
+    peca("FendaSup", tronco, CFrame.new(0,-0.44,0.50), V3(0.15,0.42,0.30), COR.labio)
 
-    local rc = 0.34
-    local monte = peca("Monte", tronco, CFrame.new(0,-0.56,-0.50)*P(-16,0,0), V3(rc*2.3,rc*1.8,rc*1.0), cor)
+    local rc = 0.33
+    local monte = peca("Monte", tronco, CFrame.new(0,-0.66,-0.50)*P(-16,0,0), V3(rc*2.3,rc*1.8,rc*1.0), cor)
     pele(monte,1.4)
     local vulva = { parts={monte}, labios={}, rc=rc }
     local function addV(p) vulva.parts[#vulva.parts+1]=p end
@@ -441,36 +523,44 @@ local function criarBoneca(baseCF)
     addV(peca("ClitCapuz", monte, CFrame.new(0,rc*0.52,-rc*0.40), V3(rc*0.48,rc*0.32,rc*0.32), COR.labio))
     local clit = peca("Clit", monte, CFrame.new(0,rc*0.52,-rc*0.56), V3(rc*0.22,rc*0.22,rc*0.24), COR.clit); addV(clit)
     S.clit, S.canal = clit, canal
-    peca("Cu", tronco, CFrame.new(0,-0.60,0.60), V3(rc*0.36,rc*0.36,rc*0.18), COR.interno)
+    peca("Cu", tronco, CFrame.new(0,-0.70,0.60), V3(rc*0.36,rc*0.36,rc*0.18), COR.interno)
 
     local cab = cabeca
-    peca("Cranio", cab, CFrame.new(0,0.10,0.05), V3(1.48,1.52,1.52), cor, Enum.PartType.Ball)
-    local queixo = peca("Queixo", cab, CFrame.new(0,-0.48,-0.20), V3(0.86,0.55,0.9), cor, Enum.PartType.Ball); pele(queixo)
-    peca("BochechaE", cab, CFrame.new(-0.42,-0.24,-0.42), V3(0.55,0.52,0.5), cor)
-    peca("BochechaD", cab, CFrame.new( 0.42,-0.24,-0.42), V3(0.55,0.52,0.5), cor)
-    peca("Nariz", cab, CFrame.new(0,-0.10,-0.72), V3(0.20,0.22,0.24), cor)
-    local bocaSup = peca("BocaSup", cab, CFrame.new(0,-0.38,-0.66), V3(0.42,0.13,0.18), COR.boca)
-    local bocaInf = peca("BocaInf", cab, CFrame.new(0,-0.47,-0.65), V3(0.40,0.15,0.18), COR.boca)
+    peca("Cranio", cab, CFrame.new(0,0.12,0.06), V3(1.40,1.44,1.44), cor, Enum.PartType.Ball)
+    peca("Testa",  cab, CFrame.new(0,0.34,-0.30), V3(1.16,0.52,0.80), cor)
+    local queixo = peca("Queixo", cab, CFrame.new(0,-0.44,-0.16), V3(0.80,0.52,0.86), cor, Enum.PartType.Ball); pele(queixo)
+    peca("Mandibula", cab, CFrame.new(0,-0.30,0.06), V3(1.18,0.60,1.10), cor)
+    peca("BochechaE", cab, CFrame.new(-0.40,-0.22,-0.40), V3(0.52,0.50,0.48), cor)
+    peca("BochechaD", cab, CFrame.new( 0.40,-0.22,-0.40), V3(0.52,0.50,0.48), cor)
+    peca("Nariz",     cab, CFrame.new(0,-0.08,-0.68), V3(0.19,0.22,0.24), cor)
+    peca("NarinaE",   cab, CFrame.new(-0.08,-0.16,-0.72), V3(0.07,0.07,0.06), Color3.fromRGB(210,160,150))
+    peca("NarinaD",   cab, CFrame.new( 0.08,-0.16,-0.72), V3(0.07,0.07,0.06), Color3.fromRGB(210,160,150))
+    local bocaSup = peca("BocaSup", cab, CFrame.new(0,-0.34,-0.62), V3(0.40,0.12,0.16), COR.boca)
+    local bocaInf, bocaInfW = peca("BocaInf", cab, CFrame.new(0,-0.44,-0.61), V3(0.38,0.14,0.16), COR.boca)
+    S.bocaInfW, S.bocaInfBase = bocaInfW, CFrame.new(0,-0.44,-0.61)
 
     for _,lado in ipairs({-1,1}) do
-        local olho = peca("Olho", cab, CFrame.new(lado*0.30,0.02,-0.60), V3(0.34,0.34,0.30), COR.olho)
-        local iris, iw = peca("Iris", olho, CFrame.new(0,0,-0.12), V3(0.20,0.20,0.14), COR.iris)
-        peca("Pupila", iris, CFrame.new(0,0,-0.18), V3(0.10,0.10,0.10), Color3.fromRGB(12,10,14))
-        S.olhos[#S.olhos+1] = { w=iw, base=CFrame.new(0,0,-0.12), ex=lado*0.30, ey=0.02, ox=0, oy=0 }
-        local pal, pw = peca("Palpebra", cab, CFrame.new(lado*0.30,0.14,-0.60), V3(0.38,0.30,0.34), cor)
-        S.palpebras[#S.palpebras+1] = { w=pw, base=CFrame.new(lado*0.30,0.14,-0.60), p=pal, baseSize=V3(0.38,0.30,0.34) }
-        peca("Sobrancelha", cab, CFrame.new(lado*0.32,0.34,-0.58), V3(0.42,0.10,0.16), COR.cabelo, Enum.PartType.Block, P(0,0,lado*6))
-        peca("Orelha", cab, CFrame.new(lado*0.72,-0.05,0), V3(0.24,0.55,0.36), cor, Enum.PartType.Block, P(0,0,lado*-12))
+        local olho = peca("Olho", cab, CFrame.new(lado*0.29,0.02,-0.58), V3(0.32,0.32,0.28), COR.olho)
+        local iris, iw = peca("Iris", olho, CFrame.new(0,0,-0.11), V3(0.19,0.19,0.13), COR.iris)
+        peca("Pupila", iris, CFrame.new(0,0,-0.17), V3(0.095,0.095,0.09), Color3.fromRGB(12,10,14))
+        peca("Brilho", iris, CFrame.new(0.05,0.05,-0.20), V3(0.06,0.06,0.05), Color3.fromRGB(255,255,255))
+        S.olhos[#S.olhos+1] = { w=iw, base=CFrame.new(0,0,-0.11), ex=lado*0.29, ey=0.02, ox=0, oy=0 }
+        local pal, pw = peca("Palpebra", cab, CFrame.new(lado*0.29,0.14,-0.58), V3(0.36,0.30,0.32), cor)
+        S.palpebras[#S.palpebras+1] = { w=pw, base=CFrame.new(lado*0.29,0.14,-0.58), p=pal, baseSize=V3(0.36,0.30,0.32) }
+        peca("Cilios", cab, CFrame.new(lado*0.29,0.22,-0.62), V3(0.38,0.07,0.12), COR.cabelo)
+        peca("Sobrancelha", cab, CFrame.new(lado*0.30,0.34,-0.56), V3(0.40,0.09,0.14), COR.cabelo, Enum.PartType.Block, P(0,0,lado*7))
+        peca("Orelha", cab, CFrame.new(lado*0.70,-0.04,0), V3(0.22,0.52,0.34), cor, Enum.PartType.Block, P(0,0,lado*-12))
     end
-    peca("Cabelo", cab, CFrame.new(0,0.24,0.10), V3(1.56,1.30,1.62), COR.cabelo, Enum.PartType.Ball)
-    for _,off in ipairs({{-0.55,0,0.35},{0.55,0,0.35},{0,0,0.62}}) do
+    peca("Cabelo", cab, CFrame.new(0,0.26,0.10), V3(1.50,1.28,1.56), COR.cabelo, Enum.PartType.Ball)
+    peca("Franja", cab, CFrame.new(0,0.40,-0.42), V3(1.28,0.42,0.60), COR.cabelo2, Enum.PartType.Ball, P(-14,0,0))
+    for _,off in ipairs({{-0.56,0,0.34},{0.56,0,0.34},{0,0,0.60}}) do
         local cf = CFrame.new(off[1],off[2],off[3])*P(18,0,0)
-        local _, w = peca("Mecha", cab, cf, V3(0.34,1.1,0.34), COR.cabelo)
+        local _, w = peca("Mecha", cab, cf, V3(0.34,1.4,0.34), COR.cabelo)
         jig(w, cf, 42, 6.5, 1.3, 0.42)
     end
 
-    local function membro(nome, pai, junta, len, raio, nm)
-        local osso = parte("Osso"..nome..nm, V3(raio*0.95,len,raio*0.95), base, cor, nil, 1)
+    local function membro(nome, pai, junta, len, raio, nm, nomeParte)
+        local osso = parte(nomeParte, V3(raio*0.95,len,raio*0.95), base, cor, nil, 1)
         osso.Transparency = 1
         local m = motor("M_"..nome..nm, pai, osso, CFrame.new(junta), CFrame.new(0,len/2,0))
         local vis = peca("Vis"..nome..nm, osso, IDENT, V3(len*1.02, raio*2, raio*2), cor, Enum.PartType.Cylinder, P(0,0,90))
@@ -480,27 +570,33 @@ local function criarBoneca(baseCF)
 
     for _,lado in ipairs({-1,1}) do
         local nm = lado>0 and "D" or "E"
-        local braco, mBraco = membro("Braco", tronco, V3(lado*0.80,0.72,0), LEN_BRACO, 0.22, nm)
-        M["braco"..nm] = mBraco
-        local ante, mAnte = membro("Antebraco", braco, V3(0,-LEN_BRACO/2,0), LEN_ANTEBRACO, 0.18, nm)
-        M["cotovelo"..nm] = mAnte
-        local mao = peca("Mao"..nm, ante, CFrame.new(0,-LEN_ANTEBRACO/2-0.14,0), V3(0.30,0.34,0.22), cor)
+        local R  = lado>0 and "Right" or "Left"
+        peca("OmbroJ"..nm, tronco, CFrame.new(lado*0.80,0.72,0), V3(0.46,0.46,0.46), cor); pele(_)
+        local braco, mBraco = membro("Braco", tronco, V3(lado*0.80,0.72,0), LEN_BRACO, 0.23, nm, R.."UpperArm")
+        M["braco"..nm] = mBraco; mBraco.Name = R.."Shoulder"
+        peca("CotoveloJ"..nm, braco, CFrame.new(0,-LEN_BRACO/2,0), V3(0.38,0.38,0.38), cor)
+        local ante, mAnte = membro("Antebraco", braco, V3(0,-LEN_BRACO/2,0), LEN_ANTEBRACO, 0.19, nm, R.."LowerArm")
+        M["cotovelo"..nm] = mAnte; mAnte.Name = R.."Elbow"
+        local mao = peca(R.."Hand", ante, CFrame.new(0,-LEN_ANTEBRACO/2-0.14,0), V3(0.30,0.34,0.22), cor)
         pele(mao)
         for f=1,4 do
             local fx=(f-2.5)*0.085
             local cf = CFrame.new(fx,-0.26,-0.02)
             local _, w = peca("Dedo"..f, mao, cf, V3(0.07,0.32,0.09), cor)
             S.dedos[#S.dedos+1] = { w=w, base=cf }
+            peca("Unha"..f, mao, cf*CFrame.new(0,-0.19,-0.03), V3(0.06,0.08,0.06), COR.unha)
         end
         peca("Polegar", mao, CFrame.new(lado*-0.17,-0.08,-0.02), V3(0.09,0.24,0.09), cor, Enum.PartType.Block, P(0,0,lado*-30))
 
-        local coxa, mCoxa = membro("Coxa", tronco, V3(lado*0.48,-0.62,0), LEN_COXA, 0.44, nm)
-        M["quadril"..nm] = mCoxa
-        local canela, mCanela = membro("Canela", coxa, V3(0,-LEN_COXA/2,0), LEN_CANELA, 0.34, nm)
-        M["joelho"..nm] = mCanela
-        local torn = peca("Tornozelo"..nm, canela, CFrame.new(0,-LEN_CANELA/2-0.10,0), V3(0.38,0.38,0.38), cor); pele(torn)
-        local pe = peca("Pe"..nm, torn, CFrame.new(0,-0.14,-0.22), V3(0.44,0.24,0.86), cor); pele(pe)
-        peca("Dedos"..nm, pe, CFrame.new(0,0,-0.44), V3(0.44,0.22,0.16), cor)
+        peca("QuadrilJ"..nm, tronco, CFrame.new(lado*0.48,-0.62,0), V3(0.62,0.62,0.62), cor)
+        local coxa, mCoxa = membro("Coxa", tronco, V3(lado*0.48,-0.62,0), LEN_COXA, 0.42, nm, R.."UpperLeg")
+        M["quadril"..nm] = mCoxa; mCoxa.Name = R.."Hip"
+        peca("JoelhoJ"..nm, coxa, CFrame.new(0,-LEN_COXA/2,0), V3(0.54,0.54,0.54), cor)
+        local canela, mCanela = membro("Canela", coxa, V3(0,-LEN_COXA/2,0), LEN_CANELA, 0.33, nm, R.."LowerLeg")
+        M["joelho"..nm] = mCanela; mCanela.Name = R.."Knee"
+        local torn = peca("Tornozelo"..nm, canela, CFrame.new(0,-LEN_CANELA/2-0.10,0), V3(0.36,0.36,0.36), cor); pele(torn)
+        local pe = peca(R.."Foot", torn, CFrame.new(0,-0.14,-0.22), V3(0.42,0.24,0.84), cor); pele(pe)
+        peca("Dedos"..nm, pe, CFrame.new(0,0,-0.43), V3(0.42,0.22,0.16), cor)
     end
 
     local baseJ = {}
@@ -518,39 +614,33 @@ local function criarBoneca(baseCF)
         pe.LightEmission=0.4; pe.Parent=at
         S.particulas[#S.particulas+1]=pe
     end
-    suor(tronco:FindFirstChild("Costelas") or tronco, 0.10)
+    suor(tronco:FindFirstChild("Peito") or tronco, 0.10)
     suor(cab, 0.08)
+
+    -- Humanoid R15
+    local hum = Instance.new("Humanoid")
+    hum.Name = "Humanoid"
+    hum.RigType = Enum.HumanoidRigType.R15
+    hum.MaxHealth = math.huge; hum.Health = math.huge
+    hum.BreakJointsOnDeath = false
+    hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+    hum.WalkSpeed = 0; hum.JumpPower = 0; hum.AutoRotate = false
+    hum.Parent = model
 
     model.PrimaryPart = hrp; model.Parent = WS
     S.boneca = { model=model, hrp=hrp, tronco=tronco, cabeca=cabeca, motores=M, baseJ=baseJ,
-                 vulva=vulva, bocaSup=bocaSup, bocaInf=bocaInf }
+                 vulva=vulva, bocaSup=bocaSup, bocaInf=bocaInf, quadrilPart=quadrilP }
     S.lastPos = hrp.CFrame
-    S.accSm = V3()
-    pcall(aplicarCorpo)
     local ok, err = pcall(construirRoupa)
     if not ok then logErr("roupa", err) end
-    for nome, on in pairs(S.props) do if on then pcall(criarProp, nome) end end
+    aplicarCorpo()
 end
 
 local function removerBoneca()
     if S.boneca and S.boneca.model then pcall(function() S.boneca.model:Destroy() end) end
     S.boneca=nil; S.sexo=false; S.prelim=false; S.masturbando=false
-    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.marcas = {},{},{},{},{},{},{},{},{},{}
-    S.bundas,S.caudas,S.propParts = {},{},{}
-end
-
---==================== CORPO (sliders) ====================
-aplicarCorpo = function()
-    if not S.boneca then return end
-    for _, s in ipairs(S.seios) do
-        if s.p.Parent then s.p.Size = s.base * S.sliderSeio end
-    end
-    for _, b in ipairs(S.bundas) do
-        if b.p.Parent then b.p.Size = b.base * S.sliderBunda end
-    end
-    if S.cintura and S.cintura.Parent and S.cinturaBase then
-        S.cintura.Size = V3(S.cinturaBase.X*S.sliderCintura, S.cinturaBase.Y, S.cinturaBase.Z*S.sliderCintura)
-    end
+    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.bundas,S.marcas =
+        {},{},{},{},{},{},{},{},{},{},{}
 end
 
 --==================== ROUPA ====================
@@ -567,83 +657,30 @@ construirRoupa = function()
         return p
     end
     grupo("sutia", function(g, tr)
-        add(g, tr, CFrame.new(0,0.36,0), V3(1.80,0.30,0.94), COR.sutia)
-        add(g, tr, CFrame.new(0,0.62,0), V3(1.78,0.16,0.92), COR.sutia)
+        add(g, tr, CFrame.new(0,0.32 - S.sag*0.10,0), V3(1.76,0.30,0.92), COR.sutia)
+        add(g, tr, CFrame.new(0,0.58 - S.sag*0.10,0), V3(1.74,0.16,0.90), COR.sutia)
         for _,lado in ipairs({-1,1}) do
             local seio = nil
             for _,s in ipairs(S.seios) do if s.lado==lado then seio = s.p end end
             if seio then
                 add(g, seio, CFrame.new(0,-RAIO_SEIO*0.06,-RAIO_SEIO*0.22),
-                    V3(RAIO_SEIO*2.08,RAIO_SEIO*2.02,RAIO_SEIO*2.25), COR.sutia)
+                    V3(RAIO_SEIO*2.10,RAIO_SEIO*2.04,RAIO_SEIO*2.22), COR.sutia)
             end
         end
     end)
     grupo("calcinha", function(g, tr)
-        add(g, tr, CFrame.new(0,-0.50,0), V3(2.02,0.60,1.02), COR.calcinha)
-        add(g, tr, CFrame.new(0,-0.60,-0.56), V3(0.90,0.44,0.28), COR.calcinha)
-        g.mancha = add(g, tr, CFrame.new(0,-0.60,-0.68), V3(0.42,0.26,0.10),
+        add(g, tr, CFrame.new(0,-0.60,0), V3(2.00,0.60,1.00), COR.calcinha)
+        add(g, tr, CFrame.new(0,-0.68,-0.56), V3(0.90,0.44,0.28), COR.calcinha)
+        g.mancha = add(g, tr, CFrame.new(0,-0.68,-0.68), V3(0.42,0.26,0.10),
                        Color3.fromRGB(220,205,225), nil, nil, Enum.Material.Glass)
     end)
     grupo("blusa", function(g, tr)
-        add(g, tr, CFrame.new(0,0.42,0), V3(1.96,1.10,1.06), COR.blusa)
-        add(g, tr, CFrame.new(0,-0.20,0), V3(1.60,0.62,0.94), COR.blusa)
+        add(g, tr, CFrame.new(0,0.40,0), V3(1.92,1.10,1.04), COR.blusa)
+        add(g, tr, CFrame.new(0,-0.28,0), V3(1.54,0.60,0.92), COR.blusa)
     end)
     grupo("saia", function(g, tr)
-        add(g, tr, CFrame.new(0,-0.78,0), V3(0.52,2.06,2.06), COR.saia,
+        add(g, tr, CFrame.new(0,-0.86,0), V3(0.52,2.04,2.04), COR.saia,
             Enum.PartType.Cylinder, P(0,0,90))
-    end)
-    -- EXTRAS
-    grupo("lingerie", function(g, tr)
-        add(g, tr, CFrame.new(0,0.40,0), V3(1.74,0.26,0.92), COR.lingerie)
-        for _,lado in ipairs({-1,1}) do
-            local seio = nil
-            for _,s in ipairs(S.seios) do if s.lado==lado then seio = s.p end end
-            if seio then
-                add(g, seio, CFrame.new(0,-RAIO_SEIO*0.02,-RAIO_SEIO*0.30),
-                    V3(RAIO_SEIO*1.5,RAIO_SEIO*1.5,RAIO_SEIO*1.6), COR.renda)
-            end
-        end
-        add(g, tr, CFrame.new(0,-0.50,0), V3(2.00,0.42,1.00), COR.lingerie)
-        add(g, tr, CFrame.new(0,-0.62,-0.58), V3(0.52,0.34,0.22), COR.renda)
-    end)
-    grupo("meiacalca", function(g, tr)
-        for _,lado in ipairs({-1,1}) do
-            local nm = lado>0 and "D" or "E"
-            local mCoxa = S.boneca.motores["quadril"..nm]
-            local mCanela = S.boneca.motores["joelho"..nm]
-            local coxa = mCoxa and mCoxa.Part1
-            local canela = mCanela and mCanela.Part1
-            if coxa then
-                add(g, coxa, CFrame.new(0,-LEN_COXA*0.18,0), V3(LEN_COXA*1.05,0.50,0.50),
-                    COR.meia, Enum.PartType.Cylinder, P(0,0,90))
-            end
-            if canela then
-                add(g, canela, CFrame.new(0,-LEN_CANELA*0.18,0), V3(LEN_CANELA*1.05,0.40,0.40),
-                    COR.meia, Enum.PartType.Cylinder, P(0,0,90))
-            end
-        end
-    end)
-    grupo("uniforme", function(g, tr)
-        add(g, tr, CFrame.new(0,0.44,0), V3(1.94,1.06,1.04), COR.uniforme)
-        add(g, tr, CFrame.new(0,-0.78,0), V3(0.52,2.02,2.02), COR.saia,
-            Enum.PartType.Cylinder, P(0,0,90))
-        add(g, tr, CFrame.new(0,0.50,-0.52), V3(0.16,0.62,0.10), COR.gravata)
-    end)
-    grupo("cosplay", function(g, tr)
-        local cab = S.boneca.cabeca
-        if cab then
-            add(g, cab, CFrame.new(-0.40,0.80,0.10)*P(-14,0,-12), V3(0.10,0.55,0.46),
-                COR.cosplay, Enum.PartType.Block)
-            add(g, cab, CFrame.new( 0.40,0.80,0.10)*P(-14,0, 12), V3(0.10,0.55,0.46),
-                COR.cosplay, Enum.PartType.Block)
-        end
-        local rabo = {}
-        for i=1,4 do
-            local cf = CFrame.new(0,-0.20+i*0.06,0.62+i*0.14)*P(-30+i*8,0,0)
-            local seg = add(g, tr, cf, V3(0.14-i*0.015,0.14-i*0.015,0.46), COR.cosplay)
-            rabo[#rabo+1] = seg
-        end
-        S.caudas = rabo
     end)
 end
 
@@ -702,58 +739,14 @@ local function rasgarRoupa(nome)
     if aviso then aviso("RASGOU!") end
 end
 
-local ROUPAS_BASE = {"blusa","sutia","calcinha","saia"}
-local ROUPAS_EXTRA = {"lingerie","meiacalca","uniforme","cosplay"}
 local function tirarTudo()
-    for _, n in ipairs(ROUPAS_BASE) do
+    for _, n in ipairs({"blusa","sutia","calcinha","saia"}) do
         task.spawn(function() tirarRoupa(n); task.wait(0.18) end)
     end
 end
 local function rasgarTudo()
-    for _, n in ipairs(ROUPAS_BASE) do
+    for _, n in ipairs({"blusa","sutia","calcinha","saia"}) do
         task.spawn(function() rasgarRoupa(n); task.wait(0.14) end)
-    end
-end
-
---==================== PROPS ====================
-criarProp = function(nome)
-    if not S.boneca then return end
-    removerProp(nome)
-    local b = S.boneca
-    local p, w
-    if nome=="vibrador" then
-        p, w = peca("Prop_Vibrador", b.tronco, CFrame.new(0,-0.60,-0.78)*P(0,90,0),
-                    V3(0.46,0.11,0.11), COR.vibrador, Enum.PartType.Cylinder)
-    elseif nome=="plug" then
-        p, w = peca("Prop_Plug", b.tronco, CFrame.new(0,-0.60,0.70)*P(-20,0,0),
-                    V3(0.13,0.24,0.13), COR.plug)
-        peca("Prop_PlugBase", b.tronco, CFrame.new(0,-0.60,0.82), V3(0.22,0.05,0.22), COR.plug)
-    elseif nome=="coleira" then
-        p, w = peca("Prop_Coleira", b.tronco, CFrame.new(0,0.96,0)*P(0,0,90),
-                    V3(0.14,0.60,0.60), COR.coleira, Enum.PartType.Cylinder)
-        peca("Prop_Pingente", b.tronco, CFrame.new(0,0.70,-0.30), V3(0.10,0.16,0.06), Color3.fromRGB(230,200,120))
-    elseif nome=="bola" then
-        p, w = peca("Prop_Bola", b.cabeca, CFrame.new(0,-0.44,-0.60), V3(0.24,0.24,0.24), COR.bolaGag)
-    end
-    if p then
-        S.propParts[nome] = { p=p, w=w }
-        S.props[nome] = true
-    end
-end
-
-removerProp = function(nome)
-    local rec = S.propParts[nome]
-    if rec and rec.p and rec.p.Parent then rec.p:Destroy() end
-    S.propParts[nome] = nil
-    S.props[nome] = false
-    -- limpa partes auxiliares
-    if S.boneca then
-        for _,d in ipairs(S.boneca.model:GetDescendants()) do
-            if d.Name=="Prop_PlugBase" or d.Name=="Prop_Pingente" then
-                if nome=="plug" and d.Name=="Prop_PlugBase" then d:Destroy() end
-                if nome=="coleira" and d.Name=="Prop_Pingente" then d:Destroy() end
-            end
-        end
     end
 end
 
@@ -761,12 +754,13 @@ end
 local function criarPica()
     local char = LP and LP.Character; if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
-    local lt  = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
+    local lt  = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso") or hrp
     if not (hrp and lt) then return end
     local sz = lt.Size
-    local L = sz.X*0.60*S.tamPica
-    local d = sz.X*0.20*S.gross
-    local baseCF = CFrame.new(0,-(sz.Y*0.5+0.55)+S.picaY, -(sz.Z*0.5+0.12))*P(-74,0,0)
+    local L = math.max(0.60, sz.X*0.55*S.tamPica)
+    local d = math.max(0.10, sz.X*0.075*S.gross)
+    local baseCF = CFrame.new(0, PICA_BASE_Y + S.picaY, PICA_BASE_Z) * P(-88,0,0)
+
     local raiz = Instance.new("Part")
     raiz.Name="Neko_PicaRaiz"; raiz.Size=V3(0.1,0.1,0.1); raiz.Shape=Enum.PartType.Ball
     raiz.Color=COR.pica; raiz.Material=Enum.Material.SmoothPlastic
@@ -774,287 +768,94 @@ local function criarPica()
     raiz.CanQuery,raiz.CanTouch=false,false; raiz.Parent=char
     local w = Instance.new("Weld"); w.Name="Neko_WeldPica"
     w.Part0,w.Part1=hrp,raiz; w.C0=baseCF; w.Parent=hrp
+
     local partes = {}
-    local function pp(nome,c0,tam,c,forma,extra) local p=peca(nome,raiz,c0,tam,c,forma,extra); partes[#partes+1]=p; return p end
-    pp("Neko_Saco", CFrame.new(0,-L*0.16,0.03), V3(d*1.5,d*0.9,d*1.1), COR.pica)
-    for _,lado in ipairs({-1,1}) do
-        pp("Neko_Bola", CFrame.new(lado*d*0.62,-L*0.14,0.03)*P(0,0,lado*14), V3(d*0.85,d*0.95,d*0.85), COR.pica)
+    local function pp(nome,c0,tam,c,forma,extra)   -- [B] devolve Part E Weld
+        local p,pw = peca(nome,raiz,c0,tam,c,forma,extra)
+        partes[#partes+1]=p
+        return p, pw
     end
-    pp("Neko_Haste1", CFrame.new(0,L*0.22,0)*P(0,0,90), V3(L*0.44,d*1.0,d*1.0), COR.pica, Enum.PartType.Cylinder)
-    pp("Neko_Haste2", CFrame.new(0,L*0.50,0)*P(0,0,88), V3(L*0.34,d*0.98,d*0.98), COR.pica, Enum.PartType.Cylinder)
-    pp("Neko_Haste3", CFrame.new(0,L*0.74,0)*P(0,0,86), V3(L*0.28,d*0.96,d*0.96), COR.pica, Enum.PartType.Cylinder)
-    pp("Neko_Veia1", CFrame.new(d*0.34,L*0.36,-d*0.26)*P(0,0,90), V3(L*0.52,d*0.15,d*0.15), COR.veia, Enum.PartType.Cylinder)
-    pp("Neko_Veia2", CFrame.new(-d*0.34,L*0.28,-d*0.24)*P(0,0,90), V3(L*0.40,d*0.12,d*0.12), COR.veia, Enum.PartType.Cylinder)
-    pp("Neko_Coroa", CFrame.new(0,L*0.88,0), V3(d*1.20,d*0.34,d*1.20), COR.glande)
-    local cab = pp("Neko_Cabeca", CFrame.new(0,L*0.96,0), V3(d*1.34,d*1.24,d*1.36), COR.glande)
-    pp("Neko_Uretra", CFrame.new(0,L*1.12,0), V3(d*0.24,d*0.10,d*0.24), COR.interno)
-    local precum = pp("Neko_Precum", CFrame.new(0,L*1.18,-d*0.10), V3(d*0.22,d*0.28,d*0.22), COR.gota)
+    pp("Neko_Saco", CFrame.new(0,-L*0.10,0.02), V3(d*2.2,d*1.3,d*1.6), COR.pica)
+    for _,lado in ipairs({-1,1}) do
+        pp("Neko_Bola", CFrame.new(lado*d*0.95,-L*0.12,0.03)*P(0,0,lado*12), V3(d*1.30,d*1.42,d*1.30), COR.pica)
+    end
+    local segs = {
+        {y=0.10, l=0.34, r=1.05, cz=0.00},
+        {y=0.42, l=0.32, r=1.00, cz=0.02},
+        {y=0.72, l=0.28, r=0.95, cz=0.05},
+    }
+    for i,s in ipairs(segs) do
+        pp("Neko_Haste"..i, CFrame.new(0,L*s.y,s.cz*L)*P(0,0,90 + i*1.6),
+           V3(L*s.l, d*2*s.r, d*2*s.r), COR.pica, Enum.PartType.Cylinder)
+    end
+    pp("Neko_Veia1", CFrame.new(d*0.70,L*0.34,-d*0.55)*P(0,0,90), V3(L*0.50,d*0.18,d*0.18), COR.veia, Enum.PartType.Cylinder)
+    pp("Neko_Veia2", CFrame.new(-d*0.70,L*0.24,-d*0.50)*P(0,0,90), V3(L*0.36,d*0.14,d*0.14), COR.veia, Enum.PartType.Cylinder)
+    pp("Neko_Veia3", CFrame.new(d*0.20,L*0.58,-d*0.80)*P(0,0,88), V3(L*0.26,d*0.11,d*0.11), COR.veia, Enum.PartType.Cylinder)
+    pp("Neko_Coroa", CFrame.new(0,L*0.94,0), V3(d*2.30,d*0.42,d*2.30), COR.glande)
+    local cab = pp("Neko_Cabeca", CFrame.new(0,L*1.02,0), V3(d*2.50,d*1.30,d*2.55), COR.glande)
+    pp("Neko_Uretra", CFrame.new(0,L*1.13,-d*0.30), V3(d*0.30,d*0.14,d*0.36), Color3.fromRGB(206,120,124))
+    local precum, precumW = pp("Neko_Precum", CFrame.new(0,L*1.16,-d*0.42), V3(d*0.30,d*0.34,d*0.30), COR.gota)
+    precum.Material = Enum.Material.Glass; precum.Transparency = 1
+
     S.picaRaiz,S.picaWeld,S.picaBase,S.picaL = raiz,w,baseCF,L
-    S.picaCabeca,S.precum,S.picaParts = cab,precum,partes
+    S.picaCabeca,S.precum,S.precumW = cab,precum,precumW
+    S.precumBase = precumW.C0
+    S.picaParts = partes
 end
 
 local function removerPica()
     local char = LP and LP.Character; if not char then return end
     for _,d in ipairs(char:GetDescendants()) do
         local n=d.Name
-        if n:sub(1,10)=="Neko_Pica" or n=="Neko_Bola" or n=="Neko_Saco" or n=="Neko_WeldPica" or n=="Neko_Precum" then
+        if n:sub(1,10)=="Neko_Pica" or n=="Neko_Bola" or n=="Neko_Saco"
+        or n=="Neko_WeldPica" or n=="Neko_Precum" or n=="Neko_Veia1"
+        or n=="Neko_Veia2" or n=="Neko_Veia3" or n=="Neko_Coroa" or n=="Neko_Uretra" then
             pcall(function() d:Destroy() end)
         end
     end
-    S.picaRaiz,S.picaWeld,S.picaCabeca,S.precum=nil,nil,nil,nil
+    S.picaRaiz,S.picaWeld,S.picaCabeca,S.precum,S.precumW=nil,nil,nil,nil,nil
+    S.picaParts={}
 end
 
---==================== CAMA ====================
-local function criarCama()
-    if S.cama and S.cama.Parent then S.cama:Destroy() end
-    local char=LP and LP.Character; local hrp=char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-    local model=Instance.new("Model"); model.Name="Neko_Cama"
-    local base=hrp.CFrame*CFrame.new(0,-2.6,-2.4)
+--==================== LEITO ====================
+local function destruirLeito()
+    if S.leito and S.leito.Parent then S.leito:Destroy() end
+    S.leito = nil
+end
+
+local function criarLeito(topY, yaw)
+    destruirLeito()
+    if not topY or topY < 0.45 then return end
+    local model = Instance.new("Model"); model.Name="Neko_Leito"
+    local baseCF = CFrame.new(S.ancoraPos.X, 0, S.ancoraPos.Z) * CFrame.Angles(0, yaw, 0)
+    local alt = math.max(0.35, topY)
     local function bloco(n,s,o,c,m)
         local p=Instance.new("Part"); p.Name=n; p.Size=s; p.Anchored=true; p.CanCollide=false
-        p.Material=m or Enum.Material.Fabric; p.Color=c; p.CFrame=base*o; p.CanQuery=false; p.Parent=model
+        p.Material=m or Enum.Material.Fabric; p.Color=c; p.CFrame=baseCF*o
+        p.CanQuery=false; p.CastShadow=false; p.Parent=model
+        return p
     end
-    bloco("Estrado",V3(5,0.4,7),CFrame.new(0,0,0),Color3.fromRGB(88,58,42),Enum.Material.Wood)
-    bloco("Colchao",V3(4.6,0.7,6.6),CFrame.new(0,0.55,0),Color3.fromRGB(246,242,238))
-    bloco("Travesseiro",V3(3.4,0.4,1.2),CFrame.new(0,1.05,2.5),Color3.fromRGB(255,235,245))
-    bloco("Lencol",V3(4.7,0.18,2.6),CFrame.new(0,0.96,-2.1),Color3.fromRGB(255,150,190))
-    model.PrimaryPart=model.Estrado; model.Parent=WS; S.cama=model
-end
-
---==================== POSES ====================
-local POSES = {
-    -- ===== base =====
-    { nome="De 4", rot=IDENT, ok={"buceta","bunda"}, pes=false,
-      motores={ raiz=P(-82,0,0), cabeca=P(78,0,0), bracoE=P(80,0,-12), bracoD=P(80,0,12),
-                cotoveloE=P(-20,0,0), cotoveloD=P(-20,0,0),
-                quadrilE=P(58,0,-13), quadrilD=P(58,0,13), joelhoE=P(-70,0,0), joelhoD=P(-70,0,0) } },
-    { nome="Papai e Mamae", rot=P(0,180,0), ok={"buceta","bunda"}, pes=false,
-      motores={ raiz=P(-88,0,0), cabeca=P(52,0,0), quadrilE=P(-72,0,-16), quadrilD=P(-72,0,16),
-                joelhoE=P(70,0,0), joelhoD=P(70,0,0), bracoE=P(-95,0,-10), bracoD=P(-95,0,10) } },
-    { nome="Sentada", rot=P(0,180,0), ok={"buceta","bunda"}, pes=false,
-      motores={ quadrilE=P(92,0,-22), quadrilD=P(92,0,22), joelhoE=P(-72,0,0), joelhoD=P(-72,0,0),
-                bracoE=P(22,0,-20), bracoD=P(22,0,20), raiz=P(6,0,0), cabeca=P(-6,0,0) } },
-    { nome="Em pe", rot=P(0,180,0), ok={"buceta","bunda"}, pes=true, motores={} },
-    { nome="Sentada nele", rot=P(0,180,0), vertical=true, pes=false, ok={"buceta"},
-      motores={ raiz=P(-5,0,0), cabeca=P(7,0,0),
-                quadrilE=P(114,0,-27), quadrilD=P(114,0,27),
-                joelhoE=P(-120,0,0), joelhoD=P(-120,0,0),
-                bracoE=P(-26,0,-24), bracoD=P(-26,0,24),
-                cotoveloE=P(-48,0,0), cotoveloD=P(-48,0,0) } },
-    { nome="Boquete", rot=P(0,180,0), oral=true, ok={"boca"}, pes=false,
-      motores={ quadrilE=P(94,0,-9), quadrilD=P(94,0,9), joelhoE=P(-84,0,0), joelhoD=P(-84,0,0),
-                cabeca=P(-26,0,0), raiz=P(6,0,0), bracoE=P(58,0,-18), bracoD=P(58,0,18),
-                cotoveloE=P(-34,0,0), cotoveloD=P(-34,0,0) } },
-    { nome="69", rot=P(0,180,0), oral=true, pivPica=true, pes=false, ok={"boca"},
-      motores={ raiz=P(86,0,0), cabeca=P(-42,0,0),
-                quadrilE=P(-32,0,-32), quadrilD=P(-32,0,32),
-                joelhoE=P(-54,0,0), joelhoD=P(-54,0,0),
-                bracoE=P(62,0,-30), bracoD=P(62,0,30) } },
-    { nome="Chupando ela", rot=IDENT, chupar=true, ok={"buceta"}, pes=false,
-      motores={ raiz=P(90,0,0), cabeca=P(-24,0,0), quadrilE=P(0,0,-50), quadrilD=P(0,0,50),
-                joelhoE=P(-30,0,0), joelhoD=P(-30,0,0), bracoE=P(-96,0,-26), bracoD=P(-96,0,26),
-                cotoveloE=P(-40,0,0), cotoveloD=P(-40,0,0) } },
-    { nome="Ombro", rot=IDENT, ok={"buceta"}, pes=false,
-      motores={ raiz=P(90,0,0), cabeca=P(-16,0,0), quadrilE=P(48,0,-18), quadrilD=P(48,0,18),
-                joelhoE=P(-40,0,0), joelhoD=P(-40,0,0), bracoE=P(-72,0,-12), bracoD=P(-72,0,12) } },
-
-    -- ===== DEITADAS =====
-    { nome="Frango Assado", rot=P(0,180,0), ok={"buceta","bunda"}, pes=false,
-      motores={ raiz=P(-90,0,0), cabeca=P(40,0,0),
-                quadrilE=P(118,0,-34), quadrilD=P(118,0,34),
-                joelhoE=P(112,0,0), joelhoD=P(112,0,0),
-                bracoE=P(-60,0,-30), bracoD=P(-60,0,30),
-                cotoveloE=P(-50,0,0), cotoveloD=P(-50,0,0) } },
-    { nome="De Lado", rot=P(0,180,0), ok={"buceta","bunda"}, pes=false,
-      motores={ raiz=P(-90,0,90), cabeca=P(20,0,-30),
-                quadrilE=P(25,0,-8), quadrilD=P(38,0,18),
-                joelhoE=P(-35,0,0), joelhoD=P(-55,0,0),
-                bracoE=P(-30,0,-40), bracoD=P(10,0,30),
-                cotoveloE=P(-40,0,0), cotoveloD=P(-30,0,0) } },
-    { nome="Conchinha", rot=P(0,180,0), ok={"buceta","bunda"}, pes=false,
-      motores={ raiz=P(-90,0,90), cabeca=P(16,0,-24),
-                quadrilE=P(55,0,-8), quadrilD=P(60,0,14),
-                joelhoE=P(-60,0,0), joelhoD=P(-70,0,0),
-                bracoE=P(-20,0,-46), bracoD=P(-10,0,26),
-                cotoveloE=P(-55,0,0), cotoveloD=P(-40,0,0) } },
-    { nome="Pernas no Ombro", rot=P(0,180,0), ok={"buceta"}, pes=false,
-      motores={ raiz=P(-90,0,0), cabeca=P(30,0,0),
-                quadrilE=P(118,0,-14), quadrilD=P(118,0,14),
-                joelhoE=P(20,0,0), joelhoD=P(20,0,0),
-                bracoE=P(-70,0,-25), bracoD=P(-70,0,25) } },
-    { nome="De Brucos", rot=IDENT, ok={"bunda"}, pes=false,
-      motores={ raiz=P(-95,0,0), cabeca=P(-30,0,0),
-                quadrilE=P(0,0,-8), quadrilD=P(0,0,8),
-                joelhoE=P(-15,0,0), joelhoD=P(-15,0,0),
-                bracoE=P(-40,0,-30), bracoD=P(-40,0,30) } },
-    { nome="Face Down", rot=IDENT, ok={"bunda"}, pes=false,
-      motores={ raiz=P(-115,0,0), cabeca=P(-50,0,0),
-                quadrilE=P(-40,0,-12), quadrilD=P(-40,0,12),
-                joelhoE=P(-40,0,0), joelhoD=P(-40,0,0),
-                bracoE=P(-70,0,-20), bracoD=P(-70,0,20) } },
-
-    -- ===== POR CIMA =====
-    { nome="Cowgirl Invertido", rot=IDENT, vertical=true, ok={"buceta"}, pes=false,
-      motores={ raiz=P(-5,0,0), cabeca=P(20,0,0),
-                quadrilE=P(114,0,-27), quadrilD=P(114,0,27),
-                joelhoE=P(-120,0,0), joelhoD=P(-120,0,0),
-                bracoE=P(-30,0,-24), bracoD=P(-30,0,24),
-                cotoveloE=P(-50,0,0), cotoveloD=P(-50,0,0) } },
-    { nome="Amazon", rot=P(0,180,0), vertical=true, ok={"buceta"}, pes=false,
-      motores={ raiz=P(-25,0,0), cabeca=P(20,0,0),
-                quadrilE=P(100,0,-24), quadrilD=P(100,0,24),
-                joelhoE=P(-100,0,0), joelhoD=P(-100,0,0),
-                bracoE=P(-20,0,-30), bracoD=P(-20,0,30) } },
-    { nome="Lotus", rot=P(0,180,0), vertical=true, ok={"buceta"}, pes=false,
-      motores={ raiz=P(-8,0,0), cabeca=P(10,0,0),
-                quadrilE=P(130,0,-30), quadrilD=P(130,0,30),
-                joelhoE=P(-120,0,0), joelhoD=P(-120,0,0),
-                bracoE=P(-40,0,-35), bracoD=P(-40,0,35),
-                cotoveloE=P(-60,0,0), cotoveloD=P(-60,0,0) } },
-    { nome="Na Beirada", rot=P(0,180,0), ok={"buceta"}, pes=true,
-      motores={ raiz=P(-2,0,0), cabeca=P(6,0,0),
-                quadrilE=P(88,0,-24), quadrilD=P(88,0,24),
-                joelhoE=P(-80,0,0), joelhoD=P(-80,0,0),
-                bracoE=P(30,0,-20), bracoD=P(30,0,20) } },
-
-    -- ===== DE PE / DINAMICAS =====
-    { nome="Na Parede", rot=P(0,180,0), ok={"buceta"}, pes=false, suspenso=true,
-      motores={ raiz=P(-15,0,0), cabeca=P(15,0,0),
-                quadrilE=P(95,0,-30), quadrilD=P(95,0,30),
-                joelhoE=P(-85,0,0), joelhoD=P(-85,0,0),
-                bracoE=P(-80,0,-30), bracoD=P(-80,0,30),
-                cotoveloE=P(-40,0,0), cotoveloD=P(-40,0,0) } },
-    { nome="Carregada", rot=P(0,180,0), ok={"buceta"}, pes=false, suspenso=true,
-      motores={ raiz=P(-10,0,0), cabeca=P(12,0,0),
-                quadrilE=P(70,0,-35), quadrilD=P(70,0,35),
-                joelhoE=P(-95,0,0), joelhoD=P(-95,0,0),
-                bracoE=P(-90,0,-25), bracoD=P(-90,0,25),
-                cotoveloE=P(-50,0,0), cotoveloD=P(-50,0,0) } },
-    { nome="Em Pe de Costas", rot=IDENT, ok={"bunda"}, pes=true,
-      motores={ raiz=P(6,0,0), cabeca=P(-10,0,0),
-                quadrilE=P(30,0,-12), quadrilD=P(30,0,12),
-                joelhoE=P(-15,0,0), joelhoD=P(-15,0,0),
-                bracoE=P(40,0,-20), bracoD=P(40,0,20) } },
-    { nome="De Quatro Invertido", rot=IDENT, ok={"bunda"}, pes=false,
-      motores={ raiz=P(-80,0,0), cabeca=P(60,0,0),
-                quadrilE=P(58,0,-13), quadrilD=P(58,0,13),
-                joelhoE=P(-70,0,0), joelhoD=P(-70,0,0),
-                bracoE=P(80,0,-12), bracoD=P(80,0,12) } },
-
-    -- ===== ORAL / PRELIMINARES =====
-    { nome="Boquete de Joelhos", rot=P(0,180,0), oral=true, ok={"boca"}, pes=false,
-      motores={ quadrilE=P(100,0,-10), quadrilD=P(100,0,10),
-                joelhoE=P(-95,0,0), joelhoD=P(-95,0,0),
-                cabeca=P(-24,0,0), raiz=P(8,0,0),
-                bracoE=P(70,0,-16), bracoD=P(70,0,16),
-                cotoveloE=P(-30,0,0), cotoveloD=P(-30,0,0) } },
-    { nome="Espanhola", rot=P(0,180,0), titfuck=true, ok={"seios"}, pes=false,
-      motores={ raiz=P(-60,0,0), cabeca=P(30,0,0),
-                quadrilE=P(90,0,-20), quadrilD=P(90,0,20),
-                joelhoE=P(-80,0,0), joelhoD=P(-80,0,0),
-                bracoE=P(-40,0,-40), bracoD=P(-40,0,40),
-                cotoveloE=P(-70,0,0), cotoveloD=P(-70,0,0) } },
-    { nome="Footjob", rot=P(0,180,0), footjob=true, ok={"pes"}, pes=false,
-      motores={ raiz=P(-70,0,0), cabeca=P(30,0,0),
-                quadrilE=P(100,0,-16), quadrilD=P(100,0,16),
-                joelhoE=P(-70,0,0), joelhoD=P(-70,0,0),
-                bracoE=P(30,0,-30), bracoD=P(30,0,30) } },
-    { nome="69 de Lado", rot=IDENT, chupar=true, ok={"buceta"}, pes=false,
-      motores={ raiz=P(85,0,0), cabeca=P(-20,0,0),
-                quadrilE=P(0,0,-40), quadrilD=P(0,0,40),
-                joelhoE=P(-25,0,0), joelhoD=P(-25,0,0),
-                bracoE=P(-90,0,-25), bracoD=P(-90,0,25) } },
-    { nome="Beijo Grego", rot=IDENT, ok={"bunda"}, pes=false,
-      motores={ raiz=P(-100,0,0), cabeca=P(80,0,0),
-                quadrilE=P(20,0,-20), quadrilD=P(20,0,20),
-                joelhoE=P(-30,0,0), joelhoD=P(-30,0,0),
-                bracoE=P(85,0,-10), bracoD=P(85,0,10) } },
-
-    -- ===== EXTRAS =====
-    { nome="Punheta", rot=P(0,180,0), handjob=true, ok={"maos"}, pes=false,
-      motores={ quadrilE=P(95,0,-12), quadrilD=P(95,0,12),
-                joelhoE=P(-85,0,0), joelhoD=P(-85,0,0),
-                cabeca=P(-10,0,0), raiz=P(6,0,0),
-                bracoE=P(50,0,-16), bracoD=P(50,0,16),
-                cotoveloE=P(-40,0,0), cotoveloD=P(-40,0,0) } },
-    { nome="Anal Deitada", rot=P(0,180,0), ok={"bunda"}, pes=false,
-      motores={ raiz=P(-90,0,0), cabeca=P(35,0,0),
-                quadrilE=P(110,0,-30), quadrilD=P(110,0,30),
-                joelhoE=P(95,0,0), joelhoD=P(95,0,0),
-                bracoE=P(-60,0,-25), bracoD=P(-60,0,25) } },
-    { nome="Anal De 4", rot=IDENT, ok={"bunda"}, pes=false,
-      motores={ raiz=P(-95,0,0), cabeca=P(70,0,0),
-                quadrilE=P(45,0,-18), quadrilD=P(45,0,18),
-                joelhoE=P(-55,0,0), joelhoD=P(-55,0,0),
-                bracoE=P(85,0,-14), bracoD=P(85,0,14) } },
-}
-local function acharPose(n) for i,p in ipairs(POSES) do if p.nome==n then return i end end end
-
-local function alvoLocal(pose, alvo)
-    local raiz = pose.motores.raiz or IDENT
-    if alvo=="boca" then
-        local cab = pose.motores.cabeca or IDENT
-        return raiz * CFrame.new(0,1.05,0) * cab * CFrame.new(0,0.34,-0.74)
-    elseif alvo=="bunda" then return raiz * CFrame.new(0,-0.58,0.66)
-    elseif alvo=="seios" then return raiz * CFrame.new(0,0.28,-0.80)
-    elseif alvo=="maos" then return raiz * CFrame.new(0,-0.05,-0.78)
-    elseif alvo=="pes" then return raiz * CFrame.new(0,-0.28,-0.95)
-    elseif alvo=="coxa" then return raiz * CFrame.new(0,-0.72,-0.60)
-    else return raiz * CFrame.new(0,-0.60,-0.62) end
+    bloco("Estrado", V3(4.4,alt-0.5,6.6), CFrame.new(0,(alt-0.5)/2,0), Color3.fromRGB(86,56,40), Enum.Material.Wood)
+    bloco("Colchao", V3(4.2,0.55,6.4), CFrame.new(0,alt-0.27,0), Color3.fromRGB(246,242,238))
+    bloco("Lencol",  V3(4.24,0.10,2.6), CFrame.new(0,alt+0.03,-1.9), Color3.fromRGB(255,150,190))
+    bloco("Travesseiro", V3(3.0,0.36,1.1), CFrame.new(0,alt+0.16,2.5), Color3.fromRGB(255,235,245))
+    model.PrimaryPart = model.Colchao; model.Parent = WS; S.leito = model
 end
 
 --==================== EVENTOS ====================
-local function pontoEjac()
-    local b = S.boneca
-    local a = S.ejacAlvo
-    if a=="rosto" then return b.cabeca.CFrame*CFrame.new(0,0.12,-0.82)
-    elseif a=="boca" then return b.cabeca.CFrame*CFrame.new(0,-0.42,-0.72)
-    elseif a=="bunda" then return b.tronco.CFrame*CFrame.new(0,-0.52,0.78)
-    elseif a=="seios" then return b.tronco.CFrame*CFrame.new(0,0.28,-0.88)
-    elseif a=="fora" then return b.tronco.CFrame*CFrame.new(0,-0.60,-1.18)
-    else return b.tronco.CFrame*CFrame.new(0,-0.62,-0.70) end
-end
-
 gozar = function()
     if not S.boneca then return end
     S.gozadas = S.gozadas + 1
     S.revirar = 1; S.olhoFechado = math.max(S.olhoFechado, 0.72)
     gemido("gozo"); som("gozo",0.7,0.9,1.2); S.contra = 1
-
-    local destino = S.ejacAlvo
-    local p = pontoEjac()
+    local p = S.boneca.tronco.CFrame * CFrame.new(0,-0.72,-0.70)
     local n = 22 + S.qual*8
-    local dirBase
-    if destino=="fora" then dirBase = V3(0,1,1)
-    elseif destino=="rosto" or destino=="boca" then dirBase = V3(0,-0.4,1)
-    elseif destino=="seios" then dirBase = V3(0,0.2,1)
-    elseif destino=="bunda" then dirBase = V3(0,-0.2,-1)
-    else dirBase = V3(0,0.2,-1) end
-    dirBase = p:VectorToWorldSpace(dirBase)
-
     for i=1,n do
         task.spawn(function()
             task.wait(i*0.02)
-            if not S.boneca then return end
-            gota(p.Position, dirBase*(3+rnd()*4) + V3((rnd()-0.5)*3, 1.5+rnd()*3, (rnd()-0.5)*3),
-                 COR.leite, true)
+            gota(p.Position, V3((rnd()-0.5)*4,2+rnd()*5,(rnd()-0.5)*4), COR.leite, true)
         end)
     end
-
-    -- marca o destino
-    task.delay(0.35, function()
-        if not S.boneca then return end
-        if destino=="rosto" then manchaLeite(S.boneca.cabeca, CFrame.new(0,0.10,-0.72), 0.16)
-        elseif destino=="boca" then manchaLeite(S.boneca.cabeca, CFrame.new(0,-0.42,-0.68), 0.10)
-        elseif destino=="seios" then
-            for _,s in ipairs(S.seios) do manchaLeite(s.p, CFrame.new(0,0.10,-0.36), 0.12) end
-        elseif destino=="bunda" then
-            for _,g in ipairs(S.bundas) do manchaLeite(g.p, CFrame.new(0,0.10,0.40), 0.12) end
-        elseif destino=="fora" then
-            fazerPoca(p.Position + V3(0,-0.4,0), COR.leite, 0.30)
-        end
-    end)
-
     task.spawn(function()
         local t0 = tick()
         while tick()-t0 < 1.6 do
@@ -1079,7 +880,7 @@ mijar = function()
         task.spawn(function()
             task.wait(i*0.03)
             if not S.boneca then return end
-            local pp = S.boneca.tronco.CFrame * CFrame.new(0,-0.60,-0.66)
+            local pp = S.boneca.tronco.CFrame * CFrame.new(0,-0.70,-0.66)
             local dir = alvo - pp.Position
             if dir.Magnitude < 0.1 then dir = V3(0,-1,0) end
             fluido(pp.Position, dir.Unit*12 + V3((rnd()-0.5)*1.5,0,(rnd()-0.5)*1.5), COR.mijo, 0.11, false)
@@ -1094,25 +895,19 @@ end
 
 --==================== FISIOLOGIA ====================
 local function atualizarFisio(dt)
-    local ativo = S.sexo or S.prelim or S.masturbando
-    if ativo then
+    if S.sexo or S.prelim or S.masturbando then
         local mult = S.prelim and 0.45 or (S.masturbando and 0.55 or 1)
         local resist = 1 - (S.tesao/100)*0.70
-        local resistExp = 1.20 - S.exp*0.13           -- exp 0 = goza rapido
-        S.tesao = math.min(100, S.tesao + dt*S.velEf*0.85*(0.55+S.ampEf)*mult*resist*resistExp*(1+S.gozadas*0.06))
-        -- fadiga
-        S.stamina = clamp(S.stamina - dt*0.018*S.velEf*(0.6+S.ampEf)*(1+S.rough*0.4), 0, 1)
+        S.tesao = math.min(100, S.tesao + dt*S.vel*0.85*(0.55+S.amp)*mult*resist*(1+S.gozadas*0.06))
         if S.tesao >= 100 then S.tesao = 0; gozar() end
     else
         S.tesao = math.max(0, S.tesao - dt*7)
-        S.stamina = clamp(S.stamina + dt*0.05, 0, 1)
     end
     local a = S.tesao/100
-    local cansaco = 1 - S.stamina
     S.blush   = aprox(S.blush,   a, 1.7, dt)
     S.molhada = aprox(S.molhada, math.min(1, a*1.5), 1.3, dt)
-    S.suor    = aprox(S.suor,    clamp((a-0.32)/0.68 + cansaco*0.5, 0, 1), 1.2, dt)
-    S.trem    = a*a + cansaco*0.35
+    S.suor    = aprox(S.suor,    clamp((a-0.32)/0.68,0,1), 1.2, dt)
+    S.trem    = a*a
     S.ereccao = aprox(S.ereccao, S.sexo and 1 or 0.25, 0.9, dt)
     S.revirar = math.max(0, S.revirar - dt*0.75)
 
@@ -1123,18 +918,18 @@ local function atualizarFisio(dt)
         end
         for _,n in ipairs(S.nips) do
             if n.p.Parent then
-                n.p.Color = clc(n.cor, COR.mamiloDuro, bTotal)
+                n.p.Color = clc(n.cor, COR.mamiloDuro, clamp(bTotal,0,1))
                 n.p.Size = n.base*(1 + clamp(bTotal,0,1)*0.40)
             end
         end
         if S.clit and S.clit.Parent then
-            S.clit.Size = V3(0.075,0.075,0.082)*(1+clamp(bTotal,0,1)*1.1)
-            S.clit.Color = clc(COR.clit, Color3.fromRGB(228,86,104), bTotal)
+            S.clit.Size = V3(0.073,0.073,0.080)*(1+clamp(bTotal,0,1)*1.1)
+            S.clit.Color = clc(COR.clit, Color3.fromRGB(228,86,104), clamp(bTotal,0,1))
         end
         if S.boneca then
             for _,l in ipairs(S.boneca.vulva.parts) do
                 if l.Parent and (l.Name=="Labio" or l.Name=="LabioInt") then
-                    l.Color = clc(l.Name=="Labio" and COR.labio or COR.interno, COR.labioQuente, bTotal)
+                    l.Color = clc(l.Name=="Labio" and COR.labio or COR.interno, COR.labioQuente, clamp(bTotal,0,1))
                 end
             end
         end
@@ -1177,12 +972,11 @@ local function atualizarPes(dt)
     if not (b and S.ikPes) then return end
     local pose = POSES[S.poseIdx]
     if S.sexo and not (pose and pose.pes) then return end
-    if pose and pose.footjob and S.sexo then return end
     local cf = b.hrp.CFrame
     for _, lado in ipairs({-1,1}) do
         local nm = lado>0 and "D" or "E"
         local Jw = (cf * CFrame.new(lado*0.48,-0.62,0)).Position
-        local res = WS:Raycast(Jw + V3(0,0.5,0), V3(0,-5.0,0))
+        local res = WS:Raycast(Jw + V3(0,0.5,0), V3(0,-7.0,0))
         local alvoMundo = res and (res.Position + V3(0,0.28,0)) or (Jw + V3(0, -(LEN_COXA+LEN_CANELA-0.10), 0))
         local J = V3(lado*0.48,-0.62,0)
         setIK(b.motores["quadril"..nm], b.motores["joelho"..nm], J, cf:PointToObjectSpace(alvoMundo),
@@ -1199,7 +993,7 @@ local function atualizarMaos(dt)
     if modo=="livre" then
         for _, d in ipairs(S.dedos) do if d.w.Parent then d.w.C0 = d.base end end
         for _, s in ipairs(S.seios) do
-            if s.p.Parent then s.p.Size = s.p.Size:Lerp(s.base*S.sliderSeio, math.min(1,dt*5)) end
+            if s.p.Parent then s.p.Size = s.p.Size:Lerp(s.base, math.min(1,dt*5)) end
         end
         return
     end
@@ -1208,16 +1002,16 @@ local function atualizarMaos(dt)
         local J = V3(lado*0.80, 0.72, 0)
         local T
         if modo=="peito" or modo=="cobrir" then
-            T = V3(lado*0.40, 0.26, modo=="cobrir" and -0.86 or -0.82)
-        elseif modo=="bunda" then T = V3(lado*0.48, -0.60, 0.62)
+            T = V3(lado*0.40, 0.26 - S.sag*0.20, modo=="cobrir" and -0.84 or -0.80)
+        elseif modo=="bunda" then T = V3(lado*0.48, -0.70, 0.62)
         else T = V3(lado*0.55, -0.30, -0.55) end
-        setIK(b.motores["braco"..nm], b.motores["cotovelo"..nm], J, T, LEN_BRACO, LEN_ANTEBRACO, J + V3(lado*1.3,-0.45,0.55))
+        setIK(b.motores["braco"..nm], b.motores["cotovelo"..nm], J, T, LEN_BRACO, LEN_ANTEBRACO,
+              J + V3(lado*1.6,-0.35,0.45))
     end
     local aperto = (modo=="peito" or modo=="cobrir") and 1 or 0
     for _, s in ipairs(S.seios) do
         if s.p.Parent then
-            local base = s.base*S.sliderSeio
-            local alvo = V3(base.X*(1+0.07*aperto), base.Y*(1+0.05*aperto), base.Z*(1-0.13*aperto))
+            local alvo = V3(s.base.X*(1+0.07*aperto), s.base.Y*(1+0.05*aperto), s.base.Z*(1-0.13*aperto))
             s.p.Size = s.p.Size:Lerp(alvo, math.min(1, dt*8))
         end
     end
@@ -1236,9 +1030,9 @@ local function atualizarOlhos(dt)
     local dz = math.max(0.18, -rel.Z)
     for _, o in ipairs(S.olhos) do
         if o.w.Parent then
-            local tx = clamp((rel.X - o.ex)/dz, -1.2, 1.2)*0.050
-            local ty = clamp((rel.Y - o.ey)/dz, -1.2, 1.2)*0.042
-            if S.revirar > 0 then tx = tx*0.15; ty = 0.048 end
+            local tx = clamp((rel.X - o.ex)/dz, -1.2, 1.2)*0.048
+            local ty = clamp((rel.Y - o.ey)/dz, -1.2, 1.2)*0.040
+            if S.revirar > 0 then tx = tx*0.15; ty = 0.046 end
             o.ox = aprox(o.ox, tx, 9, dt); o.oy = aprox(o.oy, ty, 9, dt)
             o.w.C0 = o.base * CFrame.new(o.ox, o.oy, 0)
         end
@@ -1263,10 +1057,10 @@ local function atualizarCabeca(dt)
         if mc then
             local rel = S.boneca.hrp.CFrame:PointToObjectSpace(mc.Position)
             local dist = rel.Magnitude
-            if dist > 0.3 and dist < 5.5 then
+            if dist > 0.3 and dist < 7.5 then
                 yaw = -deg(atan2(rel.X, -rel.Z))
                 pitch = deg(atan2(rel.Y, math.max(0.01, sqrt(rel.X^2+rel.Z^2))))
-                local k = clamp((5.5-dist)/2.5, 0, 1)
+                local k = clamp((7.5-dist)/3.0, 0, 1)
                 yaw, pitch = yaw*k, pitch*k
             end
         end
@@ -1340,7 +1134,7 @@ local function atualizarPrelim(dt)
         if rnd() < 0.45 then S.beijo = 1; gemido("beijo") else gemido("prelim") end
     end
     if S.tesao > 42 and S.autoAvancar then
-        S.prelim = false; S.sexo = true; S.vel = 5; S.amp = 0.42
+        S.prelim = false; S.sexo = true; S.vel = 5; S.amp = 0.30; S.ancoraOk = false
         if aviso then aviso("Ela nao aguentou e sentou em voce!") end
         gemido("fala")
     end
@@ -1360,49 +1154,25 @@ eventoRaiva = function()
         aura.Transparency=0.55; aura.Anchored,aura.CanCollide,aura.Massless=true,false,true
         aura.CanQuery=false; aura.CFrame=hrp.CFrame; aura.Parent=WS; S.aura=aura
         local bb=Instance.new("BillboardGui")
-        bb.Size=UDim2.new(0,130,0,30); bb.AlwaysOnTop=true; bb.StudsOffset=V3(0,3.7,0); bb.Parent=hrp
+        bb.Size=UDim2.new(0,130,0,30); bb.AlwaysOnTop=true; bb.StudsOffset=V3(0,4.2,0); bb.Parent=hrp
         local l=Instance.new("TextLabel")
         l.Size=UDim2.new(1,0,1,0); l.BackgroundTransparency=1; l.Text=">_<  RAIVA!"
         l.TextColor3=Color3.fromRGB(255,80,80); l.TextStrokeTransparency=0.4
         l.TextScaled=true; l.Font=Enum.Font.GothamBold; l.Parent=bb
     end
-    criarCama(); rasgarTudo()
-    S.poseAnt = S.poseIdx; S.poseIdx = acharPose("Ombro") or S.poseIdx
-    S.vel = 13; S.amp = 0.72
+    rasgarTudo()
+    S.poseAnt = S.poseIdx; S.poseIdx = acharPose("No colo") or S.poseIdx
+    S.ancoraOk = false
+    S.vel = 13; S.amp = 0.46
     task.delay(4, function()
         if rnd()<0.30 then incharVulva(); if aviso then aviso("A buceta dela inchou! (30%)") end end
     end)
     task.delay(15, function()
         S.raiva = false
         if S.aura and S.aura.Parent then S.aura:Destroy() end
-        if S.cama and S.cama.Parent then S.cama:Destroy() end
-        S.aura,S.cama = nil,nil
-        S.vel=6; S.amp=0.5; S.poseIdx=S.poseAnt
+        S.aura=nil; S.vel=6; S.amp=0.34; S.poseIdx=S.poseAnt; S.ancoraOk=false
         if aviso then aviso("Passou a raiva...") end
     end)
-end
-
---==================== CAMERA ====================
-local function atualizarCamera(dt)
-    local cam = WS.CurrentCamera
-    if not cam then return end
-    if S.cameraModo=="livre" or not S.boneca then
-        if cam.CameraType == Enum.CameraType.Scriptable then cam.CameraType = Enum.CameraType.Custom end
-        return
-    end
-    cam.CameraType = Enum.CameraType.Scriptable
-    local foco = S.boneca.tronco.Position + V3(0,0.4,0)
-    if S.cameraModo=="espectador" then
-        local char = LP and LP.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        local pos = hrp and (hrp.Position + V3(0,1.7,0)) or (foco + V3(0,1.7,-4))
-        local right = (cam.CFrame.RightVector)
-        cam.CFrame = CFrame.lookAt(pos + right*1.3, foco)
-    else
-        S.camAng = S.camAng + dt*0.25
-        local raio = 5.5
-        cam.CFrame = CFrame.lookAt(foco + V3(sin(S.camAng)*raio, 1.7, cos(S.camAng)*raio), foco)
-    end
 end
 
 print("[VB] 3 - corpo/poses/eventos ok")
@@ -1415,23 +1185,10 @@ local function ligarLoop()
         local hrpJ = char:FindFirstChild("HumanoidRootPart"); if not hrpJ then return end
         local t = tick()
 
-        S.autoT = S.autoT + dt
-
-        -- auto-ritmo
-        if S.autoRitmo and S.sexo then
-            S.velEf = 4 + abs(sin(t*0.35))*9
-            S.ampEf = 0.30 + abs(sin(t*0.22))*0.5
-        else
-            S.velEf = S.vel * (0.6 + 0.4*S.stamina)
-            S.ampEf = S.amp * (1 + S.rough*0.35)
-        end
-        S.velEf = clamp(S.velEf, 1, 22)
-
         atualizarFisio(dt)
         atualizarVergonha(dt)
         atualizarMasturbacao(dt)
         atualizarPrelim(dt)
-        atualizarCamera(dt)
 
         local look = hrpJ.CFrame.LookVector
         local flat = V3(look.X,0,look.Z); if flat.Magnitude<0.01 then flat=V3(0,0,-1) end; flat=flat.Unit
@@ -1439,8 +1196,7 @@ local function ligarLoop()
         if S.raiva and S.aura and S.aura.Parent then S.aura.CFrame = hrpJ.CFrame end
         if not (S.boneca and S.boneca.model.Parent) then return end
 
-        S.poseIdx = clamp(S.poseIdx, 1, #POSES)
-        local pose = POSES[S.poseIdx]
+        local pose = POSES[S.poseIdx] or POSES[1]
         local a = S.tesao/100
         local br = sin(S.resp*pi*2)
 
@@ -1455,83 +1211,74 @@ local function ligarLoop()
         end
 
         if S.sexo and S.picaWeld and S.picaWeld.Parent then
-            if S.autoCiclo then
-                S.cicloT = S.cicloT + dt
-                if S.cicloT > 14 then S.cicloT = 0; S.poseIdx = (S.poseIdx % #POSES) + 1; pose = POSES[S.poseIdx] end
+            local oral  = pose.oral
+            local chupa = pose.chupar
+            local vert  = pose.vertical
+            local pitch = pose.pica or 0
+            local alvo  = oral and "boca" or "buceta"
+            local tl    = alvoLocal(pose, alvo)
+
+            local baseW  = hrpJ.CFrame * S.picaBase
+            local dirW   = (baseW * P(pitch,0,0)).UpVector
+            local basePos= baseW.Position
+            local tipW   = basePos + dirW*(S.picaL*1.02)
+            local desiredRot = baseRot * pose.rot
+
+            local piv
+            if chupa then
+                local hd = char:FindFirstChild("Head")
+                piv = hd and (hd.CFrame*CFrame.new(0,-0.22,-0.34)).Position
+                   or (hrpJ.CFrame*CFrame.new(0,1.25,-0.55)).Position
+            elseif oral and pose.pivPica then
+                piv = basePos + dirW*(S.picaL*0.55)
+            else
+                piv = tipW
             end
 
-            local oral, chupa, vert = pose.oral, pose.chupar, pose.vertical
-            local alvo = oral and "boca"
-                or (chupa and "buceta")
-                or (pose.titfuck and "seios")
-                or (pose.footjob and "pes")
-                or (pose.handjob and "maos")
-                or S.alvo
-            -- valida contra a pose
-            local okAlvo = false
-            for _,k in ipairs(pose.ok or {}) do if k==alvo then okAlvo=true end end
-            if not okAlvo then alvo = (pose.ok and pose.ok[1]) or "buceta" end
+            -- ancora de mundo com mola
+            local ideal = piv - (desiredRot * tl).Position
+            if not S.ancoraOk then
+                S.ancoraPos = ideal; S.ancoraVel = V3(); S.ancoraOk = true
+                local _, yaw = desiredRot:ToEulerAnglesYXZ()
+                criarLeito(S.ancoraPos.Y + (pose.sup or -99), yaw)
+            else
+                local err = ideal - S.ancoraPos
+                S.ancoraVel = S.ancoraVel + err*55*dt - S.ancoraVel*12*dt
+                S.ancoraPos = S.ancoraPos + S.ancoraVel*dt
+            end
 
-            local tl = alvoLocal(pose, alvo)
-            local picaW = S.picaWeld.Part0.CFrame * S.picaBase
-            local picaTip = (picaW*CFrame.new(0,S.picaL*1.02,0)).Position
-            local axis = vert and V3(0,1,0) or (picaTip - picaW.Position).Unit
-            local est = chupa and sin(t*2.4)*0.06 or abs(sin(t*S.velEf))*S.ampEf
-            local desiredRot = baseRot * pose.rot
-            local pivot
-            if chupa then
-                local head = char:FindFirstChild("Head")
-                pivot = head and (head.CFrame*CFrame.new(0,-0.35,-0.40)).Position or (hrpJ.CFrame*CFrame.new(0,1.2,-0.6)).Position
-            elseif oral and pose.pivPica then pivot = picaW.Position + axis*(S.picaL*0.55)
-            else pivot = picaTip end
-            S.boneca.hrp.CFrame = CFrame.new(pivot - desiredRot*tl.Position - axis*est) * desiredRot * CFrame.new(0,S.ajY,S.ajZ)
-            S.prof = est/math.max(0.001,S.ampEf)
+            local est = (chupa and sin(t*2.4)*0.05) or (abs(sin(t*S.vel))*S.amp)
+            S.prof = est/math.max(0.001,S.amp)
+
+            S.boneca.hrp.CFrame = CFrame.new(S.ancoraPos - dirW*(est*0.5))
+                                  * desiredRot * CFrame.new(0, S.ajY, S.ajZ)
+            S.picaWeld.C0 = S.picaBase * P(pitch,0,0) * CFrame.new(0, est*0.5, 0)
 
             local gag = oral and clamp((S.prof-0.6)/0.4,0,1) or 0
-            setMotores({ mot=pose.motores, extraCab=P(-17*gag - 1.5*br,0,0) })
+            setMotores({ mot=pose.mot, extraCab=P(-17*gag - 1.5*br,0,0) })
 
-            -- IK especifico por ato
-            local picaLocal = S.boneca.hrp.CFrame:PointToObjectSpace(picaW.Position)
-            if pose.footjob then
-                for _,lado in ipairs({-1,1}) do
-                    local nm = lado>0 and "D" or "E"
-                    setIK(S.boneca.motores["quadril"..nm], S.boneca.motores["joelho"..nm],
-                          V3(lado*0.48,-0.62,0), picaLocal + V3(lado*0.12,0.05,-0.10),
-                          LEN_COXA, LEN_CANELA, V3(lado*0.4,0.3,-1.5))
-                end
-            elseif pose.titfuck then
-                for _,lado in ipairs({-1,1}) do
-                    local nm = lado>0 and "D" or "E"
-                    setIK(S.boneca.motores["braco"..nm], S.boneca.motores["cotovelo"..nm],
-                          V3(lado*0.80,0.72,0), picaLocal + V3(lado*0.30,-0.05,0.05),
-                          LEN_BRACO, LEN_ANTEBRACO, V3(lado*1.6,-0.2,-0.4))
-                end
-            elseif pose.handjob then
-                setIK(S.boneca.motores.bracoD, S.boneca.motores.cotoveloD,
-                      V3(0.80,0.72,0), picaLocal + V3(0.05,0,-0.05),
-                      LEN_BRACO, LEN_ANTEBRACO, V3(1.6,-0.1,-0.6))
-            end
-
-            if S.boneca.bocaInf then
-                local abre = (oral or S.props.bola) and 0.30 or clamp(est*0.9,0,0.35)
-                S.boneca.bocaInf.CFrame = S.boneca.cabeca.CFrame * CFrame.new(0,-0.47-abre*0.35,-0.65)
+            if S.bocaInfW and S.bocaInfW.Parent then
+                local abre = oral and 0.30 or clamp(est*0.9,0,0.35)
+                S.bocaInfW.C0 = S.bocaInfBase * CFrame.new(0, -abre*0.35, 0)
             end
             local abre = chupa and 0.40 or clamp(est*0.85,0,0.42)
             for _,l in ipairs(S.boneca.vulva.labios) do
                 if l.w and l.w.Parent then l.w.C0 = l.base*CFrame.new(l.lado*abre*0.55,0,-abre*0.30) end
             end
-            S.picaWeld.C0 = S.picaBase * CFrame.new(0,est*0.72,0)
+
             for _,p in ipairs(S.picaParts) do
                 if p.Parent and p.Name~="Neko_Precum" then
-                    local molhado = chupa and 0 or clamp(est/S.ampEf,0,1)
+                    local molhado = chupa and 0 or clamp(est/math.max(0.01,S.amp),0,1)
                     p.Material = molhado>0.35 and Enum.Material.Glass or Enum.Material.SmoothPlastic
                     p.Transparency = molhado*0.10
                 end
             end
-            if S.precum and S.precum.Parent and S.picaRaiz then
-                S.precum.CFrame = S.picaRaiz.CFrame*CFrame.new(0,S.picaL*1.18,-0.03)
-                S.precum.Transparency = 1-S.ereccao
+            if S.precumW and S.precumW.Parent then
+                S.precumW.C0 = S.precumBase * CFrame.new(0, 0, -0.02 - S.ereccao*0.04)
+                S.precum.Transparency = 1 - S.ereccao*0.85
+                S.precum.Size = V3(0.12,0.14,0.12)*(0.6+S.ereccao*0.8)
             end
+
             S.babaT = S.babaT + dt
             local lim = oral and 0.9 or 2.4
             if S.babaT > lim then
@@ -1542,14 +1289,9 @@ local function ligarLoop()
             end
             if not chupa and not oral then
                 S.somT = S.somT + dt
-                if S.somT > 1/math.max(1,S.velEf*0.9) then
-                    S.somT = 0; som("estoc",0.35+S.rough*0.12,0.85,1.2)
+                if S.somT > 1/math.max(1,S.vel*0.9) then
+                    S.somT = 0; som("estoc",0.35,0.85,1.2)
                     if S.molhada>0.4 then som("squish",0.3,0.8,1.25) end
-                end
-                -- brutalidade: marcas extras
-                if S.rough > 0.8 and rnd() < S.rough*0.02 then
-                    local pai = (alvo=="bunda") and S.boneca.tronco or S.boneca.tronco
-                    marcasDedo(pai, CFrame.new(0,-0.55, alvo=="bunda" and 0.70 or -0.72))
                 end
             end
             if oral then
@@ -1562,13 +1304,13 @@ local function ligarLoop()
                 S.cuspeT = S.cuspeT + dt
                 if S.cuspeT>1.6 then
                     S.cuspeT=0
-                    local tip = (S.picaWeld.Part0.CFrame*S.picaBase*CFrame.new(0,S.picaL*0.9,0)).Position
-                    local dir = tip-mp.Position
+                    local tip2 = (S.picaWeld.Part0.CFrame*S.picaWeld.C0*CFrame.new(0,S.picaL*0.9,0)).Position
+                    local dir = tip2-mp.Position
                     if dir.Magnitude>0.05 then fluido(mp.Position, dir.Unit*9, Color3.fromRGB(235,248,255),0.09,false) end
                 end
             end
             if not oral and S.molhada>0.25 and rnd()<S.molhada*0.25 then
-                local pv = S.boneca.tronco.CFrame*CFrame.new(0,-0.66,-0.68)
+                local pv = S.boneca.tronco.CFrame*CFrame.new(0,-0.74,-0.68)
                 gota(pv.Position, V3((rnd()-0.5)*1.2,-1.5,(rnd()-0.5)*1.2), COR.gota, true)
             end
             if chupa then
@@ -1583,8 +1325,8 @@ local function ligarLoop()
             local px = hrpJ.Position.X + flat.X*1.20
             local pz = hrpJ.Position.Z + flat.Z*1.20
             local gy = chaoEm(px, pz, hrpJ.Position.Y)
-            S.boneca.hrp.CFrame = CFrame.new(px, gy+CFG.ALT_QUADRIL, pz)*baseRot*P(0,180,0)*CFrame.new(0,br*0.015,0)
-            setMotores({ mot=POSES[4].motores })
+            S.boneca.hrp.CFrame = CFrame.new(px, gy+ALT_ROOT, pz)*baseRot*P(0,180,0)*CFrame.new(0,br*0.015,0)
+            setMotores({ mot=POSES[4].mot })
             local meuTorso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
             if meuTorso then
                 local rel = S.boneca.hrp.CFrame:PointToObjectSpace(meuTorso.Position)
@@ -1592,7 +1334,7 @@ local function ligarLoop()
                     local nm = lado>0 and "D" or "E"
                     local T = V3(rel.X + lado*0.42, rel.Y + 0.30 + sin(t*1.3+lado)*0.08, rel.Z + 0.10)
                     setIK(S.boneca.motores["braco"..nm], S.boneca.motores["cotovelo"..nm],
-                          V3(lado*0.80,0.72,0), T, LEN_BRACO, LEN_ANTEBRACO, V3(lado*1.4,0.1,0.5))
+                          V3(lado*0.80,0.72,0), T, LEN_BRACO, LEN_ANTEBRACO, V3(lado*1.5,0.1,0.5))
                 end
             end
 
@@ -1600,7 +1342,7 @@ local function ligarLoop()
             local px = hrpJ.Position.X + flat.X*2.6
             local pz = hrpJ.Position.Z + flat.Z*2.6
             local gy = chaoEm(px, pz, hrpJ.Position.Y)
-            S.boneca.hrp.CFrame = CFrame.new(px, gy+0.85, pz)*baseRot*P(0,180,0)*CFrame.new(0,br*0.02,0)
+            S.boneca.hrp.CFrame = CFrame.new(px, gy+1.20, pz)*baseRot*P(0,180,0)*CFrame.new(0,br*0.02,0)
             local PM = { raiz=P(-14,0,0), cabeca=P(16,0,0),
                          quadrilE=P(88,0,-30), quadrilD=P(88,0,30),
                          joelhoE=P(-84,0,0), joelhoD=P(-84,0,0),
@@ -1609,7 +1351,7 @@ local function ligarLoop()
             setMotores({ mot=PM, extraCab=P(-2*br,0,0) })
             local dedo = 0.5 + sin(t*3.4)*0.5
             setIK(S.boneca.motores.bracoD, S.boneca.motores.cotoveloD, V3(0.80,0.72,0),
-                  V3(0.10, -0.60, -0.62 - dedo*0.16), LEN_BRACO, LEN_ANTEBRACO, V3(1.9,-0.1,0.6))
+                  V3(0.10, -0.62, -0.62 - dedo*0.16), LEN_BRACO, LEN_ANTEBRACO, V3(2.1,-0.1,0.6))
             for _, d in ipairs(S.dedos) do
                 if d.w.Parent then d.w.C0 = d.base * P(38 + dedo*10, 0, 0) end
             end
@@ -1621,7 +1363,7 @@ local function ligarLoop()
             if S.mastOrg > 2.2 then
                 S.mastOrg = 0; gemido(rnd()<0.6 and "mast" or "normal")
                 if S.molhada > 0.45 and rnd()<0.4 then
-                    local pv = S.boneca.tronco.CFrame*CFrame.new(0,-0.66,-0.68)
+                    local pv = S.boneca.tronco.CFrame*CFrame.new(0,-0.74,-0.68)
                     gota(pv.Position, V3((rnd()-0.5)*1.2,-1.5,(rnd()-0.5)*1.2), COR.gota, true)
                 end
             end
@@ -1630,8 +1372,8 @@ local function ligarLoop()
             local px = hrpJ.Position.X + flat.X*2.4
             local pz = hrpJ.Position.Z + flat.Z*2.4
             local gy = chaoEm(px, pz, hrpJ.Position.Y)
-            S.boneca.hrp.CFrame = CFrame.new(px, gy+CFG.ALT_QUADRIL, pz)*baseRot*P(0,180,0)*CFrame.new(0,br*0.02,0)
-            setMotores({ mot=POSES[4].motores, extraCab=P(-1.2*br,0,0) })
+            S.boneca.hrp.CFrame = CFrame.new(px, gy+ALT_ROOT, pz)*baseRot*P(0,180,0)*CFrame.new(0,br*0.02,0)
+            setMotores({ mot=POSES[4].mot, extraCab=P(-1.2*br,0,0) })
         end
 
         aplicarJigs(dt)
@@ -1640,24 +1382,13 @@ local function ligarLoop()
         atualizarOlhos(dt)
         atualizarPes(dt)
 
-        -- props: vibrador treme, rabo mexe
-        local vib = S.propParts.vibrador
-        if vib and vib.w and vib.w.Parent then
-            vib.w.C0 = CFrame.new((rnd()-0.5)*0.02, 0, -0.78 + sin(t*22)*0.03) * P(0,90,0)
-        end
-        for i,seg in ipairs(S.caudas) do
-            if seg and seg.Parent then
-                seg.CFrame = seg.CFrame * P(0, sin(t*1.8 + i*0.4)*1.2, 0)
-            end
-        end
-
         local respVel
         if S.sexo and S.tesao > 85 then respVel = 0.06
-        else respVel = 0.28 + a*0.55 + S.vergonha*0.30 + (S.raiva and 0.35 or 0) + (1-S.stamina)*0.4 end
+        else respVel = 0.28 + a*0.55 + S.vergonha*0.30 + (S.raiva and 0.35 or 0) end
         S.resp = S.resp + dt*respVel
         if S.realResp then
-            local cost = S.boneca.tronco:FindFirstChild("Costelas")
-            if cost then cost.Size = V3(1.72, 0.78+br*0.03, 0.94+br*0.05) end
+            local peito = S.boneca.tronco:FindFirstChild("Peito")
+            if peito then peito.Size = V3(1.68, 0.52+br*0.03, 0.92+br*0.05) end
         end
         S.pisca = S.pisca + dt
         if S.pisca > 2.6 + rnd()*2.4 then
@@ -1676,67 +1407,40 @@ local function ligarLoop()
 end
 
 --==================== REDE ====================
-local net, netOk = nil, false
-
-if IS_SERVER then
-    local n = RS:FindFirstChild("VeniceBonecaNet")
-    if n and not n:IsA("RemoteEvent") then n:Destroy(); n = nil end
-    if not n then
-        n = Instance.new("RemoteEvent"); n.Name="VeniceBonecaNet"; n.Parent=RS
-    end
-    net = n
-    net.OnServerEvent:Connect(function(plr, tipo, dados)
-        if tipo == "sync" then pcall(function() net:FireAllClients("sync", plr, dados) end) end
-    end)
-    print("[VB] servidor: relay de rede pronto")
-else
-    task.spawn(function()
-        local n = RS:WaitForChild("VeniceBonecaNet", 2)
-        if not n then
+local netOk = false
+local net = nil
+do
+    local ok, err = pcall(function()
+        local n = RS:FindFirstChild("VeniceBonecaNet")
+        if not (n and n:IsA("RemoteEvent")) then
+            if n then n:Destroy() end
             n = Instance.new("RemoteEvent"); n.Name="VeniceBonecaNet"; n.Parent=RS
-            warn("[VB] sem relay no servidor - rode o script no server pra sincronizar")
         end
         net = n
-        net.OnClientEvent:Connect(function(tipo, plr, dados)
-            if tipo == "sync" then netOk = true; pcall(aplicarRemoto, plr, dados) end
-        end)
     end)
+    if not ok then warn("[VB] rede indisponivel: "..tostring(err)) end
 end
 
 local function capturarEstado()
     return { boneca=S.boneca, jigs=S.jigs, peleParts=S.peleParts, nips=S.nips,
              particulas=S.particulas, roupa=S.roupa, dedos=S.dedos, olhos=S.olhos,
-             palpebras=S.palpebras, seios=S.seios, bundas=S.bundas, clit=S.clit, canal=S.canal,
-             cintura=S.cintura, cinturaBase=S.cinturaBase, caudas=S.caudas,
-             lastPos=S.lastPos, accSm=S.accSm }
+             palpebras=S.palpebras, seios=S.seios, bundas=S.bundas, clit=S.clit, canal=S.canal }
 end
 local function restaurarEstado(t)
     S.boneca=t.boneca; S.jigs=t.jigs; S.peleParts=t.peleParts; S.nips=t.nips
     S.particulas=t.particulas; S.roupa=t.roupa; S.dedos=t.dedos; S.olhos=t.olhos
     S.palpebras=t.palpebras; S.seios=t.seios; S.bundas=t.bundas; S.clit=t.clit; S.canal=t.canal
-    S.cintura=t.cintura; S.cinturaBase=t.cinturaBase; S.caudas=t.caudas or {}
-    S.lastPos=t.lastPos; S.accSm=t.accSm or V3()
 end
 
 criarDollRemota = function(plr)
-    if not plr or not plr.Parent then return end
-    local existente = S.remotos[plr]
-    if existente and existente.doll and existente.doll.model and existente.doll.model.Parent then
-        return existente
-    end
-    local char = plr.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local baseCF = hrp and hrp.CFrame or nil
-
     local salvo = capturarEstado()
-    S.boneca = nil
-    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.marcas = {},{},{},{},{},{},{},{},{},{}
-    S.bundas,S.caudas,S.propParts = {},{},{}
-    local ok, err = pcall(criarBoneca, baseCF)
+    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.bundas,S.marcas =
+        {},{},{},{},{},{},{},{},{},{},{}
+    local ok, err = pcall(criarBoneca)
+    if not ok then logErr("dollRemota", err) end
     local doll = S.boneca
     local roupa = S.roupa
     restaurarEstado(salvo)
-    if not (ok and doll and doll.model and doll.model.Parent) then logErr("dollRemota", err); return end
     local rec = { doll=doll, roupa=roupa, pica=nil }
     S.remotos[plr] = rec
     return rec
@@ -1749,12 +1453,6 @@ local function aplicarRemoto(plr, dados)
     ultimoId[plr] = dados.id
     local rec = S.remotos[plr]
     if dados.spawn and not (rec and rec.doll and rec.doll.model.Parent) then
-        if #S.remotos >= CFG.MAX_REMOTOS then
-            for k,v in pairs(S.remotos) do
-                if v.doll and v.doll.model then v.doll.model:Destroy() end
-                S.remotos[k] = nil; break
-            end
-        end
         rec = criarDollRemota(plr)
         if aviso then aviso("Boneca de "..plr.Name.." apareceu!") end
     end
@@ -1781,13 +1479,26 @@ local function aplicarRemoto(plr, dados)
     if dados.pica ~= nil then
         if dados.pica and not rec.pica then
             local p = Instance.new("Part"); p.Name="RemotaPica"
-            p.Size=V3(0.25,0.25,1.1); p.Color=COR.pica; p.Anchored=true
+            p.Size=V3(0.26,0.26,1.0); p.Color=COR.pica; p.Anchored=true
             p.CanCollide=false; p.CanQuery=false; p.Parent=WS; rec.pica=p
         elseif not dados.pica and rec.pica then
             rec.pica:Destroy(); rec.pica=nil
         end
         if rec.pica and dados.pica then rec.pica.CFrame = dados.pica end
     end
+end
+
+if net then
+    pcall(function()
+        net.OnServerEvent:Connect(function(plr, tipo, dados)
+            if tipo == "sync" then pcall(function() net:FireAllClients("sync", plr, dados) end) end
+        end)
+    end)
+    pcall(function()
+        net.OnClientEvent:Connect(function(tipo, plr, dados)
+            if tipo == "sync" then netOk = true; pcall(aplicarRemoto, plr, dados) end
+        end)
+    end)
 end
 
 Players.PlayerRemoving:Connect(function(plr)
@@ -1797,11 +1508,10 @@ Players.PlayerRemoving:Connect(function(plr)
         if rec.pica then rec.pica:Destroy() end
         S.remotos[plr] = nil
     end
-    ultimoId[plr] = nil
 end)
 
 local function enviarNet()
-    if not (S.netOn and net and not IS_SERVER and S.boneca and S.boneca.model.Parent) then return end
+    if not (S.netOn and net and S.boneca and S.boneca.model.Parent) then return end
     S.netId = S.netId + 1
     local mot = {}
     for nome, m in pairs(S.boneca.motores) do if m.Parent then mot[nome] = m.C0 end end
@@ -1819,10 +1529,11 @@ local function iniciarSexo()
     if not S.boneca then criarBoneca() end
     if not S.picaOn then S.picaOn=true; criarPica() end
     S.sexo=true; S.prelim=false; S.masturbando=false
-    S.tesao=math.max(S.tesao,10); S.autoT=0
+    S.tesao=math.max(S.tesao,10); S.ancoraOk=false
 end
 local function pararSexo()
     S.sexo=false
+    destruirLeito()
     if S.boneca then
         for sem,m in pairs(S.boneca.motores) do
             if m.Parent then m.C0 = S.boneca.baseJ[sem] or IDENT end
@@ -1830,9 +1541,8 @@ local function pararSexo()
     end
 end
 local function limparTudo()
-    pararSexo(); removerPica(); removerBoneca()
+    pararSexo(); removerPica(); removerBoneca(); destruirLeito()
     if S.aura and S.aura.Parent then S.aura:Destroy() end
-    if S.cama and S.cama.Parent then S.cama:Destroy() end
     for _,g in ipairs(S.gotas) do pcall(function() g:Destroy() end) end
     for _,g in ipairs(S.pocoes) do pcall(function() g:Destroy() end) end
     for _,g in ipairs(S.marcas) do pcall(function() g:Destroy() end) end
@@ -1843,10 +1553,6 @@ local function limparTudo()
     S.gotas,S.pocoes,S.marcas,S.remotos = {},{},{},{}
     for _,c in ipairs(S.conns) do pcall(function() c:Disconnect() end) end
     S.conns={}; S.raiva=false; S.picaOn=false; S.prelim=false; S.masturbando=false
-    if S.cameraModo ~= "livre" then
-        local cam = WS.CurrentCamera
-        if cam then cam.CameraType = Enum.CameraType.Custom end
-    end
 end
 local function morder()
     if not S.boneca then return end
@@ -1855,7 +1561,7 @@ local function morder()
         local s = S.seios[rnd(2)] or S.seios[1]
         if s then mordida(s.p, CFrame.new(0, RAIO_SEIO*0.35, -RAIO_SEIO*0.95), 0.10) end
     elseif S.mordidaAlvo == "bunda" then
-        mordida(b.tronco, CFrame.new((rnd()<0.5 and -1 or 1)*0.42, -0.50, 0.94), 0.13)
+        mordida(b.tronco, CFrame.new((rnd()<0.5 and -1 or 1)*0.40, -0.60, 0.92), 0.13)
     elseif S.mordidaAlvo == "coxa" then
         mordida(b.tronco, CFrame.new(0.48, -1.20, -0.30), 0.12)
     else
@@ -1863,58 +1569,31 @@ local function morder()
     end
 end
 
---==================== SALVAR / CARREGAR CFG ====================
-local CAMPOS_CFG = {"vel","amp","volSom","qual","realJig","realResp","realSons","realSuor",
-    "realBlush","olhosSeguem","cabecaSegue","ikPes","netOn","vergonhaOn","autoCobrir",
-    "autoMast","autoAvancar","autoCiclo","autoRitmo","tamPica","gross","picaY","ajY","ajZ",
-    "exp","rough","ejacAlvo","sliderSeio","sliderBunda","sliderCintura"}
-local temArquivo = (type(writefile)=="function" and type(readfile)=="function")
-local function salvarCfg()
-    if not (CFG.SALVAR_CFG and temArquivo) then return end
-    local d = {}
-    for _,k in ipairs(CAMPOS_CFG) do d[k]=S[k] end
-    pcall(function() writefile(CFG.ARQ_CFG, HttpService:JSONEncode(d)) end)
-end
-local function carregarCfg()
-    if not temArquivo then return end
-    local ok, txt = pcall(readfile, CFG.ARQ_CFG)
-    if not ok or not txt then return end
-    local ok2, d = pcall(function() return HttpService:JSONDecode(txt) end)
-    if not ok2 or type(d)~="table" then return end
-    for _,k in ipairs(CAMPOS_CFG) do if d[k]~=nil then S[k]=d[k] end end
-end
-carregarCfg()
-
 print("[VB] 5 - controle ok")
 
 --==================== GUI ====================
-local guiConns = {}
-local function gc(c) guiConns[#guiConns+1]=c; return c end
-
 local function montarGUI()
-    for _,c in ipairs(guiConns) do pcall(function() c:Disconnect() end) end
-    guiConns = {}
-
     local pg = LP:WaitForChild("PlayerGui")
     local okH, h = pcall(function() return gethui and gethui() or nil end)
     local destino = (okH and h) or pg
     for _, cont in ipairs({pg, destino}) do
-        local antigo = cont and cont:FindFirstChild("VeniceBonecaGUI")
-        if antigo then antigo:Destroy() end
+        local a = cont and cont:FindFirstChild("VeniceBonecaGUI")
+        if a then a:Destroy() end
     end
 
     local gui = Instance.new("ScreenGui")
     gui.Name="VeniceBonecaGUI"; gui.ResetOnSpawn=false; gui.IgnoreGuiInset=true
-    gui.DisplayOrder = 999
-    gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+    gui.DisplayOrder = 999; gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
     gui.Parent = destino
 
-    local ROSA=Color3.fromRGB(255,96,160); local BTN=Color3.fromRGB(42,34,52)
-    local OKC=Color3.fromRGB(52,122,92); local ALT=Color3.fromRGB(78,52,108)
-    local BLOCO=Color3.fromRGB(60,44,80)
+    local ROSA=Color3.fromRGB(255,96,160)
+    local BTN=Color3.fromRGB(42,34,52)
+    local OKC=Color3.fromRGB(52,122,92)
+    local ALT=Color3.fromRGB(78,52,108)
+    local ABA=Color3.fromRGB(30,24,40)
 
     local main=Instance.new("Frame")
-    main.Size=UDim2.new(0,250,0,600); main.Position=UDim2.new(0,14,0,60)
+    main.Size=UDim2.new(0,252,0,462); main.Position=UDim2.new(0,14,0,70)
     main.BackgroundColor3=Color3.fromRGB(18,15,23); main.BackgroundTransparency=0.05
     main.BorderSizePixel=0; main.Active=true; main.ClipsDescendants=true; main.Parent=gui
     local cM=Instance.new("UICorner"); cM.CornerRadius=UDim.new(0,10); cM.Parent=main
@@ -1922,8 +1601,8 @@ local function montarGUI()
 
     local barra=Instance.new("TextButton")
     barra.Size=UDim2.new(1,0,0,26); barra.BackgroundColor3=ROSA; barra.BackgroundTransparency=0.15
-    barra.BorderSizePixel=0; barra.Text="   VENICE BONECA v7.1"; barra.TextColor3=Color3.new(1,1,1)
-    barra.TextSize=12; barra.Font=Enum.Font.GothamBold; barra.TextXAlignment=Enum.TextXAlignment.Left
+    barra.BorderSizePixel=0; barra.Text="   VENICE BONECA v8.0 R15"; barra.TextColor3=Color3.new(1,1,1)
+    barra.TextSize=11; barra.Font=Enum.Font.GothamBold; barra.TextXAlignment=Enum.TextXAlignment.Left
     barra.AutoButtonColor=false; barra.Parent=main
     local cB=Instance.new("UICorner"); cB.CornerRadius=UDim.new(0,10); cB.Parent=barra
     local btnMin=Instance.new("TextButton")
@@ -1931,31 +1610,29 @@ local function montarGUI()
     btnMin.Text="-"; btnMin.TextColor3=Color3.new(1,1,1); btnMin.TextSize=16
     btnMin.Font=Enum.Font.GothamBold; btnMin.Parent=barra
 
-    banner=Instance.new("TextLabel")
-    banner.Size=UDim2.new(1,0,0,30); banner.Position=UDim2.new(0,0,0,26)
+    local banner=Instance.new("TextLabel")
+    banner.Size=UDim2.new(1,0,0,22); banner.Position=UDim2.new(0,0,0,26)
     banner.BackgroundColor3=Color3.fromRGB(32,22,32); banner.BorderSizePixel=0
     banner.Text=" pronto"; banner.TextColor3=Color3.fromRGB(180,255,200)
     banner.TextSize=10; banner.Font=Enum.Font.GothamBold; banner.TextWrapped=true
     banner.TextXAlignment=Enum.TextXAlignment.Left; banner.Parent=main
-
-    local bannerSeq = 0
-    aviso = function(m, erro, dur)
-        print("[VB] "..tostring(m))
-        if not banner then return end
-        bannerSeq = bannerSeq + 1
-        local meu = bannerSeq
+    aviso = function(m, erro)
         banner.Text = " "..tostring(m)
         banner.TextColor3 = erro and Color3.fromRGB(255,120,120) or Color3.fromRGB(180,255,200)
-        task.delay(dur or 4.5, function()
-            if meu == bannerSeq and banner then
-                banner.Text = " pronto"; banner.TextColor3 = Color3.fromRGB(180,255,200)
-            end
-        end)
+        print("[VB] "..tostring(m))
     end
 
+    local barraAbas=Instance.new("Frame")
+    barraAbas.Size=UDim2.new(1,-8,0,24); barraAbas.Position=UDim2.new(0,4,0,50)
+    barraAbas.BackgroundTransparency=1; barraAbas.Parent=main
+    local layAbas=Instance.new("UIListLayout")
+    layAbas.FillDirection=Enum.FillDirection.Horizontal
+    layAbas.Padding=UDim.new(0,3); layAbas.Parent=barraAbas
+
     local corpo=Instance.new("ScrollingFrame")
-    corpo.Size=UDim2.new(1,-20,1,-64); corpo.Position=UDim2.new(0,6,0,60)
-    corpo.BackgroundTransparency=1; corpo.BorderSizePixel=0; corpo.ScrollBarThickness=0
+    corpo.Size=UDim2.new(1,-16,1,-84); corpo.Position=UDim2.new(0,6,0,78)
+    corpo.BackgroundTransparency=1; corpo.BorderSizePixel=0; corpo.ScrollBarThickness=4
+    corpo.ScrollBarImageColor3=ROSA
     corpo.CanvasSize=UDim2.new(0,0,0,0)
     corpo.AutomaticCanvasSize=Enum.AutomaticSize.Y
     corpo.ScrollingDirection=Enum.ScrollingDirection.Y
@@ -1963,41 +1640,15 @@ local function montarGUI()
     local lay=Instance.new("UIListLayout"); lay.Padding=UDim.new(0,4)
     lay.SortOrder=Enum.SortOrder.LayoutOrder; lay.Parent=corpo
 
-    local track=Instance.new("Frame")
-    track.Size=UDim2.new(0,7,1,-66); track.Position=UDim2.new(1,-10,0,62)
-    track.BackgroundColor3=Color3.fromRGB(35,28,45); track.BorderSizePixel=0; track.Parent=main
-    local ct=Instance.new("UICorner"); ct.CornerRadius=UDim.new(1,0); ct.Parent=track
-    local thumb=Instance.new("TextButton")
-    thumb.Size=UDim2.new(1,0,0,40); thumb.BackgroundColor3=ROSA; thumb.BorderSizePixel=0
-    thumb.Text=""; thumb.AutoButtonColor=false; thumb.Parent=track
-    local cth=Instance.new("UICorner"); cth.CornerRadius=UDim.new(1,0); cth.Parent=thumb
-
-    local arrastando, iniY, iniCanvas = false,0,0
-    gc(thumb.InputBegan:Connect(function(i)
-        if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then
-            arrastando=true; iniY=i.Position.Y; iniCanvas=corpo.CanvasPosition.Y end
-    end))
-    gc(UIS.InputChanged:Connect(function(i)
-        if not arrastando then return end
-        if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseMovement then
-            local mx=math.max(0,corpo.AbsoluteCanvasSize.Y-corpo.AbsoluteWindowSize.Y)
-            local faixa=math.max(1,track.AbsoluteSize.Y-thumb.AbsoluteSize.Y)
-            corpo.CanvasPosition=Vector2.new(0, clamp(iniCanvas+(i.Position.Y-iniY)*(mx/faixa),0,mx))
-        end
-    end))
-    gc(UIS.InputEnded:Connect(function(i)
-        if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then arrastando=false end
-    end))
-    gc(RunService.RenderStepped:Connect(function()
-        local mx=math.max(0,corpo.AbsoluteCanvasSize.Y-corpo.AbsoluteWindowSize.Y)
-        local th=clamp(track.AbsoluteSize.Y*(corpo.AbsoluteWindowSize.Y/math.max(1,corpo.AbsoluteCanvasSize.Y)),26,track.AbsoluteSize.Y)
-        thumb.Size=UDim2.new(1,0,0,th)
-        if mx>0 then thumb.Position=UDim2.new(0,0,0,(corpo.CanvasPosition.Y/mx)*(track.AbsoluteSize.Y-th))
-        else thumb.Position=UDim2.new(0,0,0,0) end
-    end))
-
     local ordem=0
     local function prox() ordem=ordem+1; return ordem end
+    local function limpar()
+        for _,c in ipairs(corpo:GetChildren()) do
+            if not c:IsA("UIListLayout") then c:Destroy() end
+        end
+        ordem = 0
+    end
+
     local function botao(txt,cor,cb)
         local b=Instance.new("TextButton")
         b.Size=UDim2.new(1,0,0,24); b.BackgroundColor3=cor; b.BorderSizePixel=0
@@ -2018,21 +1669,9 @@ local function montarGUI()
         l.Padding=UDim.new(0,4); l.Parent=f
         return f
     end
-    local function b2(pai,txt,cb)
+    local function b2(pai,txt,cb,cor)
         local b=Instance.new("TextButton")
-        b.Size=UDim2.new(0.5,-2,1,0); b.BackgroundColor3=BTN; b.BorderSizePixel=0
-        b.Text=txt; b.TextColor3=Color3.fromRGB(242,240,250); b.TextSize=10
-        b.Font=Enum.Font.GothamMedium; b.TextTruncate=Enum.TextTruncate.AtEnd; b.Parent=pai
-        local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,6); c.Parent=b
-        b.MouseButton1Click:Connect(function()
-            local ok,err=pcall(cb)
-            if not ok then aviso("ERRO: "..tostring(err), true); warn("[VB] "..tostring(err)) end
-        end)
-        return b
-    end
-    local function b3(pai,txt,cb)
-        local b=Instance.new("TextButton")
-        b.Size=UDim2.new(0.33,-3,1,0); b.BackgroundColor3=BTN; b.BorderSizePixel=0
+        b.Size=UDim2.new(0.5,-2,1,0); b.BackgroundColor3=cor or BTN; b.BorderSizePixel=0
         b.Text=txt; b.TextColor3=Color3.fromRGB(242,240,250); b.TextSize=10
         b.Font=Enum.Font.GothamMedium; b.TextTruncate=Enum.TextTruncate.AtEnd; b.Parent=pai
         local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,6); c.Parent=b
@@ -2041,6 +1680,14 @@ local function montarGUI()
             if not ok then aviso("ERRO: "..tostring(err), true) end
         end)
         return b
+    end
+    local function rotulo(txt)
+        local l=Instance.new("TextLabel")
+        l.Size=UDim2.new(1,0,0,16); l.BackgroundTransparency=1
+        l.Text="  "..txt; l.TextColor3=Color3.fromRGB(255,150,190)
+        l.TextSize=10; l.Font=Enum.Font.GothamBold
+        l.TextXAlignment=Enum.TextXAlignment.Left; l.LayoutOrder=prox(); l.Parent=corpo
+        return l
     end
     local function dropdown(txtInicial,itens,cb)
         local aberto=false
@@ -2050,15 +1697,15 @@ local function montarGUI()
         local cl=Instance.new("UICorner"); cl.CornerRadius=UDim.new(0,6); cl.Parent=lista
         local ll=Instance.new("UIListLayout"); ll.Padding=UDim.new(0,2); ll.Parent=lista
         local btn
-        btn=botao("  "..txtInicial.."  v", ALT, function()
+        btn=botao("  "..txtInicial.."   v", ALT, function()
             aberto=not aberto; lista.Visible=aberto
-            lista.Size = aberto and UDim2.new(1,0,0,#itens*22+6) or UDim2.new(1,0,0,0)
-            btn.Text = aberto and ("  "..txtInicial.."  ^") or ("  "..txtInicial.."  v")
+            lista.Size = aberto and UDim2.new(1,0,0,#itens*21+6) or UDim2.new(1,0,0,0)
+            btn.Text = aberto and ("  "..txtInicial.."   ^") or ("  "..txtInicial.."   v")
         end)
         lista.LayoutOrder=prox()
         for _,it in ipairs(itens) do
             local b=Instance.new("TextButton")
-            b.Size=UDim2.new(1,-6,0,20); b.BackgroundColor3=Color3.fromRGB(42,34,52)
+            b.Size=UDim2.new(1,-6,0,19); b.BackgroundColor3=Color3.fromRGB(42,34,52)
             b.BorderSizePixel=0; b.Text=it; b.TextColor3=Color3.fromRGB(240,235,250)
             b.TextSize=10; b.Font=Enum.Font.GothamMedium; b.Parent=lista
             local cc=Instance.new("UICorner"); cc.CornerRadius=UDim.new(0,5); cc.Parent=b
@@ -2066,7 +1713,7 @@ local function montarGUI()
                 local ok,err=pcall(cb, it)
                 if not ok then aviso("ERRO: "..tostring(err), true) end
                 txtInicial=it; aberto=false; lista.Visible=false
-                lista.Size=UDim2.new(1,0,0,0); btn.Text="  "..it.."  v"
+                lista.Size=UDim2.new(1,0,0,0); btn.Text="  "..it.."   v"
             end)
         end
         return btn
@@ -2075,381 +1722,321 @@ local function montarGUI()
         local b
         b = b2(pai, txt..": "..(S[campo] and "ON" or "OFF"), function()
             S[campo] = not S[campo]
-            b.Text = txt..":"..(S[campo] and "ON" or "OFF")
+            b.Text = txt..": "..(S[campo] and "ON" or "OFF")
+            b.BackgroundColor3 = S[campo] and OKC or BTN
             if extra then extra() end
-        end)
+        end, S[campo] and OKC or BTN)
         return b
     end
 
-    -- ===== CORPO =====
-    botao("SPAWN BONECA", OKC, function()
-        local ok, err = pcall(criarBoneca)
-        if ok and S.boneca then aviso("Boneca criada!") else aviso("ERRO no spawn: "..tostring(err), true) end
-    end)
-    local bSexo
-    bSexo=botao("SEXO: OFF", BTN, function()
-        if S.sexo then
-            local ok, err = pcall(pararSexo)
-            if not ok then aviso("ERRO: "..tostring(err), true) end
-        else
-            local ok, err = pcall(iniciarSexo)
-            if not ok then aviso("ERRO: "..tostring(err), true) end
+    local abasBotoes = {}
+    local construtores = {}
+
+    construtores["GERAL"] = function()
+        botao("SPAWN BONECA", OKC, function()
+            local ok, err = pcall(criarBoneca)
+            if ok and S.boneca then aviso("Boneca R15 criada!") else aviso("ERRO: "..tostring(err), true) end
+        end)
+        local bSexo
+        bSexo=botao("SEXO: OFF", BTN, function()
+            if S.sexo then
+                local ok,err = pcall(pararSexo); if not ok then aviso("ERRO: "..tostring(err), true) end
+            else
+                local ok,err = pcall(iniciarSexo); if not ok then aviso("ERRO: "..tostring(err), true) end
+            end
+            bSexo.Text = "SEXO: "..(S.sexo and "ON" or "OFF")
+            bSexo.BackgroundColor3 = S.sexo and ALT or BTN
+            aviso(S.sexo and "Sexo ON" or "Sexo OFF")
+        end)
+        botao("PRELIMINARES", ALT, function()
+            local ok,err = pcall(iniciarPrelim)
+            if ok then aviso("Preliminares... deixa ela te puxar") else aviso("ERRO: "..tostring(err), true) end
+        end)
+        botao("CHUPAR ELA", ALT, function()
+            S.poseIdx = acharPose("Chupando ela") or S.poseIdx
+            if not S.boneca then criarBoneca() end
+            if not S.picaOn then S.picaOn=true; criarPica() end
+            S.sexo=true; S.prelim=false; S.ancoraOk=false
+            aviso("Lambendo ela...")
+        end)
+        botao("SPAWN CAMA", ALT, function()
+            criarLeito((S.boneca and S.boneca.hrp.Position.Y or 3.6) - 2.1, 0)
+            aviso("Cama criada")
+        end)
+        botao("FORCAR RAIVA (rasga tudo)", Color3.fromRGB(150,52,52), function()
+            if not S.boneca then criarBoneca() end
+            S.sexo=true; S.prelim=false; eventoRaiva()
+        end)
+        local r=linha()
+        b2(r,"REMOVER BONECA", function() removerBoneca(); aviso("Removida") end)
+        b2(r,"REPOSICIONAR", function() criarBoneca(); aviso("Reposicionada") end)
+        botao("REMOVER TUDO", Color3.fromRGB(138,48,72), function()
+            limparTudo(); aviso("Tudo removido")
+        end)
+    end
+
+    construtores["CORPO"] = function()
+        rotulo("CAIMENTO (peito e bunda)")
+        local r0=linha()
+        b2(r0,"CAIMENTO -", function()
+            S.sag=math.max(0, S.sag-0.08); aplicarCorpo(); aviso("Caimento "..math.floor(S.sag*100).."%")
+        end)
+        b2(r0,"CAIMENTO +", function()
+            S.sag=math.min(1, S.sag+0.08); aplicarCorpo(); aviso("Caimento "..math.floor(S.sag*100).."%")
+        end)
+        local r0b=linha()
+        b2(r0b,"DURINHOS (0%)", function() S.sag=0.10; aplicarCorpo(); aviso("Quase durinhos") end)
+        b2(r0b,"BEM CAIDOS (100%)", function() S.sag=1.00; aplicarCorpo(); aviso("Bem caidos") end)
+        rotulo("TAMANHO DO PEITO")
+        local r1=linha()
+        b2(r1,"PEITO -", function() S.tamPeito=math.max(0.5,S.tamPeito-0.08); aplicarCorpo(); aviso("Peito") end)
+        b2(r1,"PEITO +", function() S.tamPeito=math.min(2.0,S.tamPeito+0.08); aplicarCorpo(); aviso("Peito") end)
+        rotulo("TAMANHO DA BUNDA")
+        local r2=linha()
+        b2(r2,"BUNDA -", function() S.tamBunda=math.max(0.5,S.tamBunda-0.08); aplicarCorpo(); aviso("Bunda") end)
+        b2(r2,"BUNDA +", function() S.tamBunda=math.min(2.0,S.tamBunda+0.08); aplicarCorpo(); aviso("Bunda") end)
+        rotulo("QUADRIL")
+        local r3=linha()
+        b2(r3,"ESTREITO", function() S.largQuadril=math.max(0.7,S.largQuadril-0.06); aplicarCorpo(); aviso("Quadril") end)
+        b2(r3,"LARGO", function() S.largQuadril=math.min(1.4,S.largQuadril+0.06); aplicarCorpo(); aviso("Quadril") end)
+    end
+
+    construtores["POSICAO"] = function()
+        local nomes={} for _,p in ipairs(POSES) do nomes[#nomes+1]=p.nome end
+        dropdown("POSICAO: "..POSES[S.poseIdx].nome, nomes, function(n)
+            S.poseIdx = acharPose(n) or S.poseIdx
+            S.ancoraOk = false
+            aviso("Posicao: "..n)
+        end)
+        dropdown("BURACO: "..S.alvo, {"Buceta","Bunda","Boca"}, function(n)
+            S.alvo = ({Buceta="buceta",Bunda="bunda",Boca="boca"})[n]
+            aviso("Alvo: "..n)
+        end)
+        rotulo("RITMO")
+        local rV=linha()
+        b2(rV,"VELOCIDADE -", function() S.vel=math.max(1,S.vel-1); aviso("Vel "..S.vel) end)
+        b2(rV,"VELOCIDADE +", function() S.vel=math.min(18,S.vel+1); aviso("Vel "..S.vel) end)
+        local rA=linha()
+        b2(rA,"AMPLITUDE -", function() S.amp=math.max(0.08,S.amp-0.05); aviso("Amp") end)
+        b2(rA,"AMPLITUDE +", function() S.amp=math.min(1.0,S.amp+0.05); aviso("Amp") end)
+        rotulo("AJUSTE FINO")
+        local rY=linha()
+        b2(rY,"DESCER", function() S.ajY=S.ajY-0.05; aviso("Y") end)
+        b2(rY,"SUBIR", function() S.ajY=S.ajY+0.05; aviso("Y") end)
+        local rZ=linha()
+        b2(rZ,"PRA FRENTE", function() S.ajZ=S.ajZ-0.05; aviso("Z") end)
+        b2(rZ,"PRA TRAS", function() S.ajZ=S.ajZ+0.05; aviso("Z") end)
+        local rG=linha()
+        b2(rG,"GOZAR", function() gozar(); aviso("Ela gozou!") end)
+        b2(rG,"MIJAR", function() mijar(); aviso("Ela mijou!") end)
+        botao("LIMPAR FLUIDOS", BTN, function()
+            for _,g in ipairs(S.gotas) do pcall(function() g:Destroy() end) end
+            for _,g in ipairs(S.pocoes) do pcall(function() g:Destroy() end) end
+            S.gotas,S.pocoes={},{}; aviso("Limpo")
+        end)
+    end
+
+    construtores["PICA"] = function()
+        local bPica
+        bPica=botao("PICA: OFF", BTN, function()
+            S.picaOn=not S.picaOn
+            if S.picaOn then criarPica() else removerPica() end
+            bPica.Text="PICA: "..(S.picaOn and "ON" or "OFF")
+            bPica.BackgroundColor3 = S.picaOn and ALT or BTN
+            aviso(S.picaOn and "Pica ON" or "Pica OFF")
+        end)
+        rotulo("ALTURA")
+        local rY=linha()
+        b2(rY,"BAIXO", function() S.picaY=math.max(-0.30,S.picaY-0.05); if S.picaOn then removerPica(); criarPica() end; aviso("PicaY") end)
+        b2(rY,"CIMA",  function() S.picaY=math.min(0.30,S.picaY+0.05); if S.picaOn then removerPica(); criarPica() end; aviso("PicaY") end)
+        rotulo("TAMANHO")
+        local rT=linha()
+        b2(rT,"MENOR", function() S.tamPica=math.max(0.6,S.tamPica-0.10); if S.picaOn then removerPica(); criarPica() end; aviso("Tam") end)
+        b2(rT,"MAIOR", function() S.tamPica=math.min(1.8,S.tamPica+0.10); if S.picaOn then removerPica(); criarPica() end; aviso("Tam") end)
+        rotulo("ESPESSURA")
+        local rG=linha()
+        b2(rG,"FINA", function() S.gross=math.max(0.7,S.gross-0.10); if S.picaOn then removerPica(); criarPica() end; aviso("Gross") end)
+        b2(rG,"GROSSA", function() S.gross=math.min(1.8,S.gross+0.10); if S.picaOn then removerPica(); criarPica() end; aviso("Gross") end)
+    end
+
+    construtores["ROUPA"] = function()
+        local function temR(n) return S.roupa[n] and S.roupa[n].on end
+        local r=linha()
+        b2(r,"TIRAR TUDO", function() tirarTudo(); aviso("Roupa tirada") end)
+        b2(r,"VESTIR TUDO", function()
+            for _,n in ipairs({"blusa","sutia","calcinha","saia"}) do vestirRoupa(n) end
+            aviso("Vestida")
+        end)
+        rotulo("PECAS")
+        local r2=linha()
+        b2(r2,"Blusa", function()
+            if not S.roupa.blusa then aviso("Spawn primeiro"); return end
+            if temR("blusa") then tirarRoupa("blusa") else vestirRoupa("blusa") end
+        end)
+        b2(r2,"Sutia", function()
+            if not S.roupa.sutia then aviso("Spawn primeiro"); return end
+            if temR("sutia") then tirarRoupa("sutia") else vestirRoupa("sutia") end
+        end)
+        local r3=linha()
+        b2(r3,"Calcinha", function()
+            if not S.roupa.calcinha then aviso("Spawn primeiro"); return end
+            if temR("calcinha") then tirarRoupa("calcinha") else vestirRoupa("calcinha") end
+        end)
+        b2(r3,"Saia", function()
+            if not S.roupa.saia then aviso("Spawn primeiro"); return end
+            if temR("saia") then tirarRoupa("saia") else vestirRoupa("saia") end
+        end)
+        rotulo("RASGAR")
+        local r4=linha()
+        b2(r4,"RASGAR TUDO", function() rasgarTudo(); aviso("Rasgou!") end)
+        b2(r4,"RASGAR PECA", function()
+            for _,n in ipairs({"blusa","sutia","calcinha","saia"}) do
+                if temR(n) then rasgarRoupa(n); aviso("Rasgou "..n); return end
+            end
+            aviso("Nada pra rasgar")
+        end)
+    end
+
+    construtores["MARCAS"] = function()
+        dropdown("MORDER: "..S.mordidaAlvo, {"ombro","peito","bunda","coxa"}, function(n)
+            S.mordidaAlvo=n; aviso("Morder: "..n)
+        end)
+        local r=linha()
+        b2(r,"MORDER", function() morder(); aviso("Mordeu o "..S.mordidaAlvo) end)
+        b2(r,"LIMPAR MARCAS", function()
+            for _,m in ipairs(S.marcas) do pcall(function() m:Destroy() end) end
+            S.marcas={}; aviso("Marcas limpas")
+        end)
+        rotulo("MAOS")
+        dropdown("MAOS: Livre", {"Livre","Agarrar peito","Agarrar bunda","Cobrir"}, function(n)
+            S.maos = ({Livre="livre",["Agarrar peito"]="peito",["Agarrar bunda"]="bunda",Cobrir="cobrir"})[n]
+            if n=="Agarrar peito" and S.boneca then
+                for _,s in ipairs(S.seios) do marcasDedo(s.p, CFrame.new(0, RAIO_SEIO*0.30, -RAIO_SEIO*1.0)) end
+            end
+            aviso("Maos: "..n)
+        end)
+    end
+
+    construtores["AUTO"] = function()
+        local r=linha()
+        toggle(r, "VERGONHA", "vergonhaOn")
+        toggle(r, "AUTO COBRIR", "autoCobrir")
+        local r2=linha()
+        toggle(r2, "AUTO MAST", "autoMast")
+        toggle(r2, "AUTO AVANCAR", "autoAvancar")
+        botao("FORCAR VERGONHA MAX", ALT, function() S.vergonha=1; aviso("Vergonha maxima") end)
+    end
+
+    construtores["REAL"] = function()
+        local r=linha()
+        toggle(r, "JIGGLE", "realJig", function()
+            if not S.realJig and S.boneca then
+                for _,j in ipairs(S.jigs) do j.off=V3(); if j.w.Parent then j.w.C0=j.base end end
+            end
+        end)
+        toggle(r, "RESPIRAR", "realResp")
+        local r2=linha()
+        toggle(r2, "SONS", "realSons")
+        toggle(r2, "SUOR", "realSuor")
+        local r3=linha()
+        toggle(r3, "BLUSH", "realBlush")
+        b2(r3,"VOL -", function() S.volSom=math.max(0,S.volSom-0.15); aviso("Vol") end)
+        local r4=linha()
+        b2(r4,"VOL +", function() S.volSom=math.min(1.5,S.volSom+0.15); aviso("Vol") end)
+        b2(r4,"QUALIDADE: "..S.qual, function() S.qual=S.qual%3+1; aviso("Qualidade "..S.qual) end)
+        rotulo("COMPORTAMENTO")
+        local r5=linha()
+        toggle(r5, "OLHOS SEGUEM", "olhosSeguem")
+        toggle(r5, "CABECA SEGUE", "cabecaSegue")
+        local r6=linha()
+        toggle(r6, "IK DOS PES", "ikPes")
+        toggle(r6, "MULTIPLAYER", "netOn", function()
+            if S.netOn and not netOk then aviso("Rede sem resposta - modo local") end
+        end)
+    end
+
+    local ordemAbas = {"GERAL","CORPO","POSICAO","PICA","ROUPA","MARCAS","AUTO","REAL"}
+
+    local function abrir(nome)
+        for n,b in pairs(abasBotoes) do
+            b.BackgroundColor3 = (n==nome) and ROSA or ABA
+            b.TextColor3 = (n==nome) and Color3.new(1,1,1) or Color3.fromRGB(235,230,245)
         end
-        bSexo.Text = "SEXO: "..(S.sexo and "ON" or "OFF")
-        bSexo.BackgroundColor3 = S.sexo and ALT or BTN
-        aviso(S.sexo and "Sexo ON" or "Sexo OFF")
-    end)
-    botao("PRELIMINARES", ALT, function()
-        local ok, err = pcall(iniciarPrelim)
-        if ok then aviso("Preliminares... deixa ela te puxar") else aviso("ERRO: "..tostring(err), true) end
-    end)
-
-    -- ===== POSICAO / ALVO =====
-    local nomes={} for _,p in ipairs(POSES) do nomes[#nomes+1]=p.nome end
-    dropdown("POSICAO: De 4", nomes, function(n) S.poseIdx=acharPose(n) or S.poseIdx; S.autoT=0; aviso("Posicao: "..n) end)
-    dropdown("ALVO: Buceta", {"Buceta","Bunda","Boca","Seios","Maos","Pes","Coxa"}, function(n)
-        S.alvo=({Buceta="buceta",Bunda="bunda",Boca="boca",Seios="seios",Maos="maos",Pes="pes",Coxa="coxa"})[n]
-        aviso("Alvo: "..n)
-    end)
-    dropdown("EJAC: dentro", {"dentro","fora","rosto","bunda","boca","seios"}, function(n)
-        S.ejacAlvo=n; aviso("Ejaculacao: "..n)
-    end)
-
-    local barraF=Instance.new("Frame")
-    barraF.Size=UDim2.new(1,0,0,20); barraF.BackgroundColor3=Color3.fromRGB(30,24,38)
-    barraF.BorderSizePixel=0; barraF.LayoutOrder=prox(); barraF.Parent=corpo
-    local cbf=Instance.new("UICorner"); cbf.CornerRadius=UDim.new(0,6); cbf.Parent=barraF
-    local preen=Instance.new("Frame")
-    preen.Size=UDim2.new(0,0,1,0); preen.BackgroundColor3=Color3.fromRGB(255,90,150)
-    preen.BorderSizePixel=0; preen.Parent=barraF
-    local cpf=Instance.new("UICorner"); cpf.CornerRadius=UDim.new(0,6); cpf.Parent=preen
-    local lblBar=Instance.new("TextLabel")
-    lblBar.Size=UDim2.new(1,0,1,0); lblBar.BackgroundTransparency=1; lblBar.Text="TESAO 0%"
-    lblBar.TextColor3=Color3.new(1,1,1); lblBar.TextSize=10; lblBar.Font=Enum.Font.GothamBold; lblBar.Parent=barraF
-    gc(RunService.RenderStepped:Connect(function()
-        preen.Size=UDim2.new(S.tesao/100,0,1,0)
-        lblBar.Text=string.format("TESAO %d%% | verg %d%% | goz %d | STA %d%%%s",
-            math.floor(S.tesao), math.floor(S.vergonha*100), S.gozadas, math.floor(S.stamina*100),
-            S.masturbando and " | MAST" or (S.prelim and " | PRELIM" or (S.raiva and " | RAIVA" or "")))
-    end))
-
-    local rV=linha()
-    b2(rV,"VELOC -", function() S.vel=math.max(1,S.vel-1); aviso("Vel "..S.vel) end)
-    b2(rV,"VELOC +", function() S.vel=math.min(18,S.vel+1); aviso("Vel "..S.vel) end)
-    local rA=linha()
-    b2(rA,"AMP -", function() S.amp=math.max(0.1,S.amp-0.06); aviso("Amp") end)
-    b2(rA,"AMP +", function() S.amp=math.min(1.2,S.amp+0.06); aviso("Amp") end)
-    local rY=linha()
-    b2(rY,"DESCER", function() S.ajY=S.ajY-0.05; aviso("Y") end)
-    b2(rY,"SUBIR", function() S.ajY=S.ajY+0.05; aviso("Y") end)
-    local rZ=linha()
-    b2(rZ,"PRA FRENTE", function() S.ajZ=S.ajZ-0.05; aviso("Z") end)
-    b2(rZ,"PRA TRAS", function() S.ajZ=S.ajZ+0.05; aviso("Z") end)
-
-    -- ===== EXPERIENCIA / RITMO =====
-    botao("--- EXPERIENCIA / RITMO ---", BLOCO, function() end)
-    dropdown("EXP: 1 - media", {"0 - virgem","1 - media","2 - experiente","3 - safada"}, function(n)
-        S.exp = tonumber(n:sub(1,1)) or 1; aviso("Experiencia: "..n)
-    end)
-    local rEx=linha()
-    b2(rEx,"BRUTAL -", function() S.rough=math.max(0,S.rough-0.5); aviso("Brutalidade "..S.rough) end)
-    b2(rEx,"BRUTAL +", function() S.rough=math.min(2,S.rough+0.5); aviso("Brutalidade "..S.rough) end)
-    local rEx2=linha()
-    toggle(rEx2, "AUTO RITMO", "autoRitmo")
-    b2(rEx2,"STAMINA 100", function() S.stamina=1; aviso("Stamina cheia") end)
-
-    -- ===== CORPO (sliders) =====
-    botao("--- CORPO ---", BLOCO, function() end)
-    local rS1=linha()
-    b2(rS1,"SEIO -", function() S.sliderSeio=math.max(0.4,S.sliderSeio-0.1); aplicarCorpo(); aviso("Seio "..string.format("%.1f",S.sliderSeio)) end)
-    b2(rS1,"SEIO +", function() S.sliderSeio=math.min(2.2,S.sliderSeio+0.1); aplicarCorpo(); aviso("Seio "..string.format("%.1f",S.sliderSeio)) end)
-    local rS2=linha()
-    b2(rS2,"BUNDA -", function() S.sliderBunda=math.max(0.4,S.sliderBunda-0.1); aplicarCorpo(); aviso("Bunda "..string.format("%.1f",S.sliderBunda)) end)
-    b2(rS2,"BUNDA +", function() S.sliderBunda=math.min(2.2,S.sliderBunda+0.1); aplicarCorpo(); aviso("Bunda "..string.format("%.1f",S.sliderBunda)) end)
-    local rS3=linha()
-    b2(rS3,"CINTURA -", function() S.sliderCintura=math.max(0.5,S.sliderCintura-0.1); aplicarCorpo(); aviso("Cintura "..string.format("%.1f",S.sliderCintura)) end)
-    b2(rS3,"CINTURA +", function() S.sliderCintura=math.min(2.0,S.sliderCintura+0.1); aplicarCorpo(); aviso("Cintura "..string.format("%.1f",S.sliderCintura)) end)
-    local rS4=linha()
-    b2(rS4,"CORPO PADRAO", function() S.sliderSeio=1;S.sliderBunda=1;S.sliderCintura=1; aplicarCorpo(); aviso("Corpo padrao") end)
-    b2(rS4,"MAX CURVAS", function() S.sliderSeio=1.6;S.sliderBunda=1.7;S.sliderCintura=0.7; aplicarCorpo(); aviso("Curvas maximas") end)
-
-    -- ===== PICA =====
-    local bPica
-    bPica=botao("PICA: OFF", BTN, function()
-        S.picaOn=not S.picaOn
-        if S.picaOn then criarPica() else removerPica() end
-        bPica.Text="PICA: "..(S.picaOn and "ON" or "OFF")
-        bPica.BackgroundColor3 = S.picaOn and ALT or BTN
-    end)
-    local rPY=linha()
-    b2(rPY,"PICA BAIXO", function() S.picaY=S.picaY-0.06; if S.picaOn then removerPica(); criarPica() end; aviso("PicaY") end)
-    b2(rPY,"PICA CIMA", function() S.picaY=S.picaY+0.06; if S.picaOn then removerPica(); criarPica() end; aviso("PicaY") end)
-    local rTP=linha()
-    b2(rTP,"PICA -", function() S.tamPica=math.max(0.5,S.tamPica-0.12); if S.picaOn then removerPica(); criarPica() end; aviso("Tam") end)
-    b2(rTP,"PICA +", function() S.tamPica=math.min(2.0,S.tamPica+0.12); if S.picaOn then removerPica(); criarPica() end; aviso("Tam") end)
-    local rGr=linha()
-    b2(rGr,"GROSS -", function() S.gross=math.max(0.6,S.gross-0.12); if S.picaOn then removerPica(); criarPica() end; aviso("Gross") end)
-    b2(rGr,"GROSS +", function() S.gross=math.min(2.0,S.gross+0.12); if S.picaOn then removerPica(); criarPica() end; aviso("Gross") end)
-
-    local rGz=linha()
-    b2(rGz,"GOZAR", function() gozar(); aviso("Ela gozou!") end)
-    b2(rGz,"MIJAR", function() mijar(); aviso("Ela mijou!") end)
-    botao("LIMPAR FLUIDOS", BTN, function()
-        for _,g in ipairs(S.gotas) do pcall(function() g:Destroy() end) end
-        for _,g in ipairs(S.pocoes) do pcall(function() g:Destroy() end) end
-        S.gotas,S.pocoes={},{}; aviso("Limpo")
-    end)
-
-    botao("CHUPAR ELA", ALT, function()
-        S.poseIdx=acharPose("Chupando ela") or S.poseIdx; S.autoT=0
-        if not S.boneca then criarBoneca() end
-        if not S.picaOn then S.picaOn=true; criarPica() end
-        S.sexo=true; S.prelim=false; aviso("Lambendo ela...")
-    end)
-    botao("SPAWN CAMA", ALT, function() criarCama(); aviso("Cama criada") end)
-    botao("FORCAR RAIVA (rasga roupa)", Color3.fromRGB(150,52,52), function()
-        if not S.boneca then criarBoneca() end
-        S.sexo=true; S.prelim=false; eventoRaiva()
-    end)
-
-    -- ===== PROPS =====
-    botao("--- PROPS ---", BLOCO, function() end)
-    local rPr=linha()
-    b3(rPr,"Vibrador", function()
-        if S.props.vibrador then removerProp("vibrador"); aviso("Vibrador off")
-        else criarProp("vibrador"); aviso("Vibrador on") end
-    end)
-    b3(rPr,"Plug", function()
-        if S.props.plug then removerProp("plug"); aviso("Plug off")
-        else criarProp("plug"); aviso("Plug on") end
-    end)
-    b3(rPr,"Coleira", function()
-        if S.props.coleira then removerProp("coleira"); aviso("Coleira off")
-        else criarProp("coleira"); aviso("Coleira on") end
-    end)
-    local rPr2=linha()
-    b3(rPr2,"Bola", function()
-        if S.props.bola then removerProp("bola"); aviso("Bola off")
-        else criarProp("bola"); aviso("Bola on") end
-    end)
-    b3(rPr2,"Tirar todos", function()
-        for n in pairs(S.props) do removerProp(n) end; aviso("Props removidos")
-    end)
-    b3(rPr2,"Aleatorio", function()
-        for n in pairs(S.props) do if rnd()<0.5 then criarProp(n) else removerProp(n) end end
-        aviso("Props aleatorios")
-    end)
-
-    -- ===== ROUPA =====
-    botao("--- ROUPA ---", BLOCO, function() end)
-    local function temR(n) return S.roupa[n] and S.roupa[n].on end
-    local rR=linha()
-    b2(rR,"TIRAR TUDO", function() tirarTudo(); aviso("Roupa tirada") end)
-    b2(rR,"VESTIR TUDO", function()
-        for _,n in ipairs(ROUPAS_BASE) do vestirRoupa(n) end
-        aviso("Vestida")
-    end)
-    local rR2=linha()
-    b2(rR2,"Blusa", function()
-        if not S.roupa.blusa then aviso("Spawn primeiro"); return end
-        if temR("blusa") then tirarRoupa("blusa") else vestirRoupa("blusa") end
-    end)
-    b2(rR2,"Sutia", function()
-        if not S.roupa.sutia then aviso("Spawn primeiro"); return end
-        if temR("sutia") then tirarRoupa("sutia") else vestirRoupa("sutia") end
-    end)
-    local rR3=linha()
-    b2(rR3,"Calcinha", function()
-        if not S.roupa.calcinha then aviso("Spawn primeiro"); return end
-        if temR("calcinha") then tirarRoupa("calcinha") else vestirRoupa("calcinha") end
-    end)
-    b2(rR3,"Saia", function()
-        if not S.roupa.saia then aviso("Spawn primeiro"); return end
-        if temR("saia") then tirarRoupa("saia") else vestirRoupa("saia") end
-    end)
-    local rR4=linha()
-    b2(rR4,"RASGAR TUDO", function() rasgarTudo(); aviso("Rasgou!") end)
-    b2(rR4,"RASGAR PECA", function()
-        for _,n in ipairs(ROUPAS_BASE) do
-            if temR(n) then rasgarRoupa(n); aviso("Rasgou "..n); return end
+        limpar()
+        local f = construtores[nome]
+        if f then
+            local ok,err = pcall(f)
+            if not ok then aviso("ERRO aba "..nome..": "..tostring(err), true) end
         end
-        aviso("Nada pra rasgar")
-    end)
-    -- extras
-    botao("--- ROUPAS EXTRAS ---", BLOCO, function() end)
-    local rRx=linha()
-    b2(rRx,"Lingerie", function()
-        if not S.roupa.lingerie then aviso("Spawn primeiro"); return end
-        if temR("lingerie") then tirarRoupa("lingerie") else vestirRoupa("lingerie") end
-    end)
-    b2(rRx,"Meia-calca", function()
-        if not S.roupa.meiacalca then aviso("Spawn primeiro"); return end
-        if temR("meiacalca") then tirarRoupa("meiacalca") else vestirRoupa("meiacalca") end
-    end)
-    local rRx2=linha()
-    b2(rRx2,"Uniforme", function()
-        if not S.roupa.uniforme then aviso("Spawn primeiro"); return end
-        if temR("uniforme") then tirarRoupa("uniforme") else vestirRoupa("uniforme") end
-    end)
-    b2(rRx2,"Cosplay gato", function()
-        if not S.roupa.cosplay then aviso("Spawn primeiro"); return end
-        if temR("cosplay") then tirarRoupa("cosplay") else vestirRoupa("cosplay") end
-    end)
+        corpo.CanvasPosition = Vector2.new(0,0)
+    end
 
-    -- ===== MARCAS =====
-    botao("--- MARCAS ---", BLOCO, function() end)
-    dropdown("MORDER: ombro", {"ombro","peito","bunda","coxa"}, function(n) S.mordidaAlvo=n; aviso("Morder: "..n) end)
-    local rMk=linha()
-    b2(rMk,"MORDER", function() morder(); aviso("Mordeu o "..S.mordidaAlvo) end)
-    b2(rMk,"LIMPAR MARCAS", function()
-        for _,m in ipairs(S.marcas) do pcall(function() m:Destroy() end) end
-        S.marcas={}; aviso("Marcas limpas")
-    end)
+    for _,nome in ipairs(ordemAbas) do
+        local b=Instance.new("TextButton")
+        b.Size=UDim2.new(0,29,1,0); b.BackgroundColor3=ABA; b.BorderSizePixel=0
+        b.Text=nome; b.TextColor3=Color3.fromRGB(235,230,245)
+        b.TextSize=8; b.Font=Enum.Font.GothamBold; b.Parent=barraAbas
+        local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,5); c.Parent=b
+        b.MouseButton1Click:Connect(function() abrir(nome) end)
+        abasBotoes[nome]=b
+    end
 
-    -- ===== MAOS =====
-    botao("--- MAOS ---", BLOCO, function() end)
-    dropdown("MAOS: Livre", {"Livre","Agarrar peito","Agarrar bunda","Cobrir"}, function(n)
-        S.maos = ({Livre="livre",["Agarrar peito"]="peito",["Agarrar bunda"]="bunda",Cobrir="cobrir"})[n]
-        if n=="Agarrar peito" and S.boneca then
-            for _,s in ipairs(S.seios) do marcasDedo(s.p, CFrame.new(0, RAIO_SEIO*0.30, -RAIO_SEIO*1.0)) end
-        end
-        aviso("Maos: "..n)
-    end)
-
-    -- ===== AUTO =====
-    botao("--- AUTO / VERGONHA ---", BLOCO, function() end)
-    local rVg=linha()
-    toggle(rVg, "VERGONHA", "vergonhaOn")
-    toggle(rVg, "AUTO COBRIR", "autoCobrir")
-    local rVg2=linha()
-    toggle(rVg2, "AUTO MAST", "autoMast")
-    toggle(rVg2, "AUTO AVANCAR", "autoAvancar")
-    local rVg3=linha()
-    toggle(rVg3, "AUTO CICLO", "autoCiclo")
-    b2(rVg3,"VERGONHA MAX", function() S.vergonha=1; aviso("Vergonha maxima") end)
-
-    -- ===== CAMERA =====
-    botao("--- CAMERA ---", BLOCO, function() end)
-    dropdown("CAMERA: livre", {"livre","espectador","cinematico"}, function(n)
-        S.cameraModo = n
-        if n=="livre" then
-            local cam = WS.CurrentCamera
-            if cam then cam.CameraType = Enum.CameraType.Custom end
-        end
-        aviso("Camera: "..n)
-    end)
-
-    -- ===== REALISMO =====
-    botao("--- REALISMO / EXTRAS ---", BLOCO, function() end)
-    local rZ1=linha()
-    toggle(rZ1, "JIGGLE", "realJig", function()
-        if not S.realJig and S.boneca then for _,j in ipairs(S.jigs) do j.off=V3(); if j.w.Parent then j.w.C0=j.base end end end
-    end)
-    toggle(rZ1, "RESPIRAR", "realResp")
-    local rZ2=linha()
-    toggle(rZ2, "SONS", "realSons")
-    toggle(rZ2, "SUOR", "realSuor")
-    local rZ3=linha()
-    toggle(rZ3, "BLUSH", "realBlush")
-    b2(rZ3,"VOL -", function() S.volSom=math.max(0,S.volSom-0.15); aviso("Vol") end)
-    local rZ4=linha()
-    b2(rZ4,"VOL +", function() S.volSom=math.min(1.5,S.volSom+0.15); aviso("Vol") end)
-    b2(rZ4,"QUAL: "..S.qual, function() S.qual=S.qual%3+1; aviso("Qualidade "..S.qual) end)
-    local rX=linha()
-    toggle(rX, "OLHOS SEGUEM", "olhosSeguem")
-    toggle(rX, "CABECA SEGUE", "cabecaSegue")
-    local rX2=linha()
-    toggle(rX2, "IK DOS PES", "ikPes")
-    toggle(rX2, "MULTIPLAYER", "netOn", function()
-        if S.netOn and not netOk then aviso("Rede sem resposta - modo local") end
-    end)
-
-    local rB=linha()
-    b2(rB,"REMOVER BONECA", function() removerBoneca(); aviso("Removida") end)
-    b2(rB,"REPOSICIONAR", function() criarBoneca(); aviso("Reposicionada") end)
-    botao("SALVAR CONFIG", ALT, function() salvarCfg(); aviso("Config salva") end)
-    botao("REMOVER TUDO", Color3.fromRGB(138,48,72), function()
-        limparTudo(); bSexo.Text="SEXO: OFF"; bSexo.BackgroundColor3=BTN
-        bPica.Text="PICA: OFF"; bPica.BackgroundColor3=BTN; aviso("Tudo removido")
-    end)
-
-    -- ARRASTAR
     local arr,ini,sp = false,nil,nil
-    gc(barra.InputBegan:Connect(function(input)
+    barra.InputBegan:Connect(function(input)
         if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
             arr,ini,sp=true,input.Position,main.Position
             input.Changed:Connect(function() if input.UserInputState==Enum.UserInputState.End then arr=false end end)
         end
-    end))
-    gc(UIS.InputChanged:Connect(function(input)
+    end)
+    UIS.InputChanged:Connect(function(input)
         if not arr then return end
         if input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch then
             local d=input.Position-ini
             main.Position=UDim2.new(sp.X.Scale,sp.X.Offset+d.X,sp.Y.Scale,sp.Y.Offset+d.Y)
         end
-    end))
+    end)
     local mini=false
     btnMin.MouseButton1Click:Connect(function()
-        mini=not mini; corpo.Visible=not mini; track.Visible=not mini
-        main.Size = mini and UDim2.new(0,250,0,26) or UDim2.new(0,250,0,600)
+        mini=not mini; corpo.Visible=not mini; barraAbas.Visible=not mini
+        main.Size = mini and UDim2.new(0,252,0,26) or UDim2.new(0,252,0,462)
         btnMin.Text = mini and "+" or "-"
     end)
 
-    gc(UIS.InputBegan:Connect(function(input, gp)
-        if gp then return end
-        if input.KeyCode == CFG.TECLA then
-            gui.Enabled = not gui.Enabled
-            aviso(gui.Enabled and "GUI ON" or "GUI OFF")
-        end
-    end))
-
+    abrir("GERAL")
     return gui
 end
 
-if not IS_SERVER then
-    local guiOk, guiErr = pcall(montarGUI)
-    if guiOk then
-        print("[VB] 6 - GUI criada")
-    else
-        warn("[VB] FALHA NA GUI: "..tostring(guiErr))
-        local pg = LP and LP:WaitForChild("PlayerGui")
-        if pg then
-            local f = Instance.new("Frame")
-            f.Size=UDim2.new(0,260,0,50); f.Position=UDim2.new(0,20,0,100)
-            f.BackgroundColor3=Color3.fromRGB(120,20,40); f.Parent=pg
-            local t=Instance.new("TextLabel"); t.Size=UDim2.new(1,0,1,0); t.BackgroundTransparency=1
-            t.Text="VB erro: "..tostring(guiErr); t.TextScaled=true; t.TextColor3=Color3.new(1,1,1); t.Parent=f
-        end
-    end
+local guiOk, guiErr = pcall(montarGUI)
+if guiOk then
+    print("[VB] 6 - GUI criada")
+else
+    warn("[VB] FALHA NA GUI: "..tostring(guiErr))
+    local pg = LP:WaitForChild("PlayerGui")
+    local f = Instance.new("Frame")
+    f.Size=UDim2.new(0,300,0,60); f.Position=UDim2.new(0,20,0,100)
+    f.BackgroundColor3=Color3.fromRGB(120,20,40); f.Parent=pg
+    local t=Instance.new("TextLabel"); t.Size=UDim2.new(1,0,1,0); t.BackgroundTransparency=1
+    t.Text="VB erro: "..tostring(guiErr); t.TextScaled=true; t.TextColor3=Color3.new(1,1,1); t.Parent=f
 end
 
 --==================== INIT ====================
-if not IS_SERVER then
-    task.spawn(function()
-        ligarLoop()
-        task.wait(0.4)
-        if aviso then aviso("Pronto! Spawn -> SEXO ou PRELIMINARES") end
-    end)
-    task.spawn(function()
-        while true do
-            task.wait(1/12)
-            pcall(enviarNet)
-        end
-    end)
-    if LP then
-        LP.CharacterAdded:Connect(function()
-            task.wait(1)
-            if S.picaOn then task.wait(0.5); criarPica() end
-            if S.boneca then task.wait(0.3); criarBoneca() end
-        end)
-    end
-end
-
+task.spawn(function()
+    ligarLoop()
+    task.wait(0.4)
+    if aviso then aviso("Pronto! GERAL -> SPAWN -> SEXO") end
+end)
 task.spawn(function()
     while true do
-        task.wait(10)
-        pcall(salvarCfg)
+        task.wait(1/12)
+        pcall(enviarNet)
     end
 end)
+if LP then
+    LP.CharacterAdded:Connect(function()
+        task.wait(1)
+        if S.picaOn then task.wait(0.5); criarPica() end
+        if S.boneca then task.wait(0.3); criarBoneca() end
+    end)
+end
 
 print("[VB] 7 - TUDO CARREGADO OK")
