@@ -1,16 +1,14 @@
 --[[===========================================================
-   VENICE BONECA v7.1  -  COMPLETO (HEROINA)
+   VENICE BONECA v7.2  -  COMPLETO (HEROINA)
    -----------------------------------------------------------
    Base: v7.0 (sistema de sexo/poses/roupa/jiggle intacto)
-   Mudanca: a boneca agora e a HEROINA
-     - pele, rosto e cabelo antigos da Heroina
-     - tiara, gargantilha, ombreiras, bracadeiras, botas,
-       capa (com jiggle) e espada nas costas
-     - armadura sexual mapeada na ROUPA:
-         sutia    = bustie metalico (conchas)
-         calcinha = tanga metalica
-         blusa    = peitoral prateado
-         saia     = saia de placas
+   Boneca: HEROINA (pele, rosto, cabelo, tiara, armadura)
+   FIX v7.2:
+     [1] peca() agora converte Vector3 -> CFrame (corrige
+         "invalid argument #1 (CFrame expected, got Vector3)"
+         que abortava a criacao da boneca)
+     [2] pica reposicionada (base mais baixa/centrada) e mais
+         fina para ficar proporcional
 ===========================================================]]
 
 print("[VB] 1 - iniciando")
@@ -48,7 +46,7 @@ local LEN_COXA, LEN_CANELA     = 1.24, 1.18
 local LEN_BRACO, LEN_ANTEBRACO = 1.22, 1.10
 local ALT_QUADRIL              = 0.62
 local ALT_ROOT                 = LEN_COXA + LEN_CANELA + ALT_QUADRIL
-local PICA_BASE_Y, PICA_BASE_Z = -0.38, 0.05
+local PICA_BASE_Y, PICA_BASE_Z = -0.50, -0.05
 
 local COR = {
     pele=Color3.fromRGB(240,201,178), peleBlush=Color3.fromRGB(248,166,157),
@@ -155,6 +153,7 @@ local function peca(nome, pai, c0, tam, cor, forma, rotExtra, mat)
     p.CanQuery, p.CanTouch = false,false
     p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
     p.Parent = pai
+    if typeof(c0) == "Vector3" then c0 = CFrame.new(c0) end
     local w = Instance.new("Weld"); w.Part0, w.Part1 = pai, p
     w.C0 = c0 * (rotExtra or IDENT); w.Parent = pai
     return p, w
@@ -744,8 +743,8 @@ local function criarPica()
     local lt  = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso") or hrp
     if not (hrp and lt) then return end
     local sz = lt.Size
-    local L = math.max(0.55, sz.X*0.44*S.tamPica)
-    local d = math.max(0.10, sz.X*0.070*S.gross)
+    local L = math.max(0.50, sz.X*0.40*S.tamPica)
+    local d = math.max(0.09, sz.X*0.062*S.gross)
     local baseCF = CFrame.new(0, PICA_BASE_Y + S.picaY, PICA_BASE_Z) * P(-88,0,0)
 
     local raiz = Instance.new("Part")
@@ -760,26 +759,26 @@ local function criarPica()
     local function pp(nome,c0,tam,c,forma,extra)
         local p=peca(nome,raiz,c0,tam,c,forma,extra); partes[#partes+1]=p; return p
     end
-    pp("Neko_Saco", CFrame.new(0,-L*0.10,0.02), V3(d*2.2,d*1.3,d*1.6), COR.pica)
+    pp("Neko_Saco", CFrame.new(0,-L*0.08,0.01), V3(d*2.4,d*1.4,d*1.7), COR.pica)
     for _,lado in ipairs({-1,1}) do
-        pp("Neko_Bola", CFrame.new(lado*d*0.95,-L*0.12,0.03)*P(0,0,lado*12), V3(d*1.30,d*1.42,d*1.30), COR.pica)
+        pp("Neko_Bola", CFrame.new(lado*d*1.0,-L*0.10,0.02)*P(0,0,lado*12), V3(d*1.35,d*1.5,d*1.35), COR.pica)
     end
     local segs = {
-        {y=0.10, l=0.34, r=1.05, cz=0.00},
-        {y=0.42, l=0.32, r=1.00, cz=0.02},
-        {y=0.72, l=0.28, r=0.95, cz=0.05},
+        {y=0.14, l=0.36, r=1.00, cz=0.00},
+        {y=0.46, l=0.32, r=0.94, cz=0.02},
+        {y=0.74, l=0.26, r=0.88, cz=0.04},
     }
     for i,s in ipairs(segs) do
-        pp("Neko_Haste"..i, CFrame.new(0,L*s.y,s.cz*L)*P(0,0,90 + i*1.6),
+        pp("Neko_Haste"..i, CFrame.new(0,L*s.y,s.cz*L)*P(0,0,90 + i*1.4),
            V3(L*s.l, d*2*s.r, d*2*s.r), COR.pica, Enum.PartType.Cylinder)
     end
-    pp("Neko_Veia1", CFrame.new(d*0.70,L*0.34,-d*0.55)*P(0,0,90), V3(L*0.50,d*0.18,d*0.18), COR.veia, Enum.PartType.Cylinder)
-    pp("Neko_Veia2", CFrame.new(-d*0.70,L*0.24,-d*0.50)*P(0,0,90), V3(L*0.36,d*0.14,d*0.14), COR.veia, Enum.PartType.Cylinder)
-    pp("Neko_Veia3", CFrame.new(d*0.20,L*0.58,-d*0.80)*P(0,0,88), V3(L*0.26,d*0.11,d*0.11), COR.veia, Enum.PartType.Cylinder)
-    pp("Neko_Coroa", CFrame.new(0,L*0.94,0), V3(d*2.30,d*0.42,d*2.30), COR.glande)
-    local cab = pp("Neko_Cabeca", CFrame.new(0,L*1.02,0), V3(d*2.50,d*1.30,d*2.55), COR.glande)
-    pp("Neko_Uretra", CFrame.new(0,L*1.13,-d*0.30), V3(d*0.30,d*0.14,d*0.36), Color3.fromRGB(206,120,124))
-    local precum, precumW = pp("Neko_Precum", CFrame.new(0,L*1.16,-d*0.42), V3(d*0.30,d*0.34,d*0.30), COR.gota)
+    pp("Neko_Veia1", CFrame.new(d*0.62,L*0.36,-d*0.55)*P(0,0,90), V3(L*0.46,d*0.16,d*0.16), COR.veia, Enum.PartType.Cylinder)
+    pp("Neko_Veia2", CFrame.new(-d*0.62,L*0.26,-d*0.50)*P(0,0,90), V3(L*0.34,d*0.13,d*0.13), COR.veia, Enum.PartType.Cylinder)
+    pp("Neko_Veia3", CFrame.new(d*0.18,L*0.60,-d*0.78)*P(0,0,88), V3(L*0.24,d*0.10,d*0.10), COR.veia, Enum.PartType.Cylinder)
+    pp("Neko_Coroa", CFrame.new(0,L*0.94,0), V3(d*2.50,d*0.40,d*2.50), COR.glande)
+    local cab = pp("Neko_Cabeca", CFrame.new(0,L*1.04,0), V3(d*2.55,d*1.45,d*2.60), COR.glande)
+    pp("Neko_Uretra", CFrame.new(0,L*1.16,-d*0.30), V3(d*0.30,d*0.14,d*0.36), Color3.fromRGB(206,120,124))
+    local precum, precumW = pp("Neko_Precum", CFrame.new(0,L*1.20,-d*0.44), V3(d*0.30,d*0.34,d*0.30), COR.gota)
     precum.Material = Enum.Material.Glass; precum.Transparency = 1
 
     S.picaRaiz,S.picaWeld,S.picaBase,S.picaL = raiz,w,baseCF,L
@@ -1586,7 +1585,7 @@ local function montarGUI()
 
     local barra=Instance.new("TextButton")
     barra.Size=UDim2.new(1,0,0,26); barra.BackgroundColor3=ROSA; barra.BackgroundTransparency=0.15
-    barra.BorderSizePixel=0; barra.Text="   VENICE BONECA v7.1 (HEROINA)"; barra.TextColor3=Color3.new(1,1,1)
+    barra.BorderSizePixel=0; barra.Text="   VENICE BONECA v7.2 (HEROINA)"; barra.TextColor3=Color3.new(1,1,1)
     barra.TextSize=12; barra.Font=Enum.Font.GothamBold; barra.TextXAlignment=Enum.TextXAlignment.Left
     barra.AutoButtonColor=false; barra.Parent=main
     local cB=Instance.new("UICorner"); cB.CornerRadius=UDim.new(0,10); cB.Parent=barra
