@@ -1,22 +1,18 @@
 --[[===========================================================
-   VENICE BONECA v8.0  -  R15 + CAIMENTO
+   VENICE BONECA v8.2 R15 - COMPLETA
    -----------------------------------------------------------
    CORRECOES DESTA VERSAO
-     [A] BUG "invalid argument #1 (CFrame expected, got Vector3)"
-         As juntas (OmbroJ / QuadrilJ) passavam Vector3 no
-         parametro C0 do peca(). Agora peca() aceita os dois,
-         e as chamadas passam CFrame.
-     [B] BUG "attempt to index nil with 'C0'"
-         pp() em criarPica devolvia so a Part, entao
-         precumW era nil. Agora devolve Part + Weld.
-
-   NOVIDADES
-     [C] CAIMENTO (peito e bunda meio caidos) com slider
-     [D] Boneca R15: nomes R15, Humanoid R15 e proporcoes
-         de avatar (pernas 1.38+1.26, bracos 1.34+1.26,
-         altura igual ao seu personagem).
-     [E] Aba CORPO nova: caimento, tamanho de peito/bunda
-         e largura de quadril, tudo ao vivo.
+     [FIX] erro "attempt to index number with 'Color'" linha 181
+           era pele(_) no loop dos bracos -> _ e numero, nao peca.
+           Isso abortava criarBoneca ANTES de model.Parent = WS,
+           entao a boneca ficava "separada no ar" / invisivel.
+     [FIX] pele() agora e defensivo (aceita nil)
+     [FIX] model.Parent = WS logo no inicio -> build parcial visivel
+     [FIX] ALT_ROOT corrigido (3.26) -> pes no chao
+     [FIX] pica: segmentos sobrepostos, sem vao no meio
+     [FIX] poses: inclinacao de pica recalculada por pose
+     [OK ] boneca em R15 (UpperTorso/LowerTorso/LeftUpperArm...)
+     [OK ] caimento de peito e bunda (0-100%) com lobo pesado
 ===========================================================]]
 
 print("[VB] 1 - iniciando")
@@ -44,18 +40,17 @@ local function V3(x,y,z) return Vector3.new(x or 0,y or 0,z or 0) end
 local function logErr(o,e) local m="[VB] ERRO em "..o..": "..tostring(e); warn(m); print(m) end
 local function chaoEm(x,z,y)
     local r = WS:Raycast(V3(x,(y or 0)+3,z), V3(0,-60,0))
-    return r and r.Position.Y or ((y or 0)-3.0)
+    return r and r.Position.Y or ((y or 0)-2.4)
 end
 
 local aviso, construirRoupa, gozar, mijar, eventoRaiva, incharVulva, criarDollRemota
-local RAIO_SEIO, RAIO_BUNDA = 0.44, 0.50
+local RAIO_SEIO, RAIO_BUNDA = 0.42, 0.48
 
--- PROPORCOES R15 (avatar padrao: HRP a 3 studs do chao)
 local LEN_COXA, LEN_CANELA     = 1.38, 1.26
-local LEN_BRACO, LEN_ANTEBRACO = 1.34, 1.26
+local LEN_BRACO, LEN_ANTEBRACO = 1.30, 1.18
 local ALT_QUADRIL              = 0.62
-local ALT_ROOT                 = 3.62          -- quadril a 3.0 do chao
-local PICA_BASE_Y, PICA_BASE_Z = -0.20, 0.06
+local ALT_ROOT                 = LEN_COXA + LEN_CANELA + ALT_QUADRIL   -- 3.26
+local PICA_BASE_Y, PICA_BASE_Z = -0.20, 0.05
 
 local COR = {
     pele=Color3.fromRGB(240,201,178), peleBlush=Color3.fromRGB(248,166,157),
@@ -86,9 +81,7 @@ local S = {
     vergonhaOn=true, autoCobrir=true, autoMast=true, autoAvancar=true,
     qual=2, volSom=0.6,
     poseIdx=1, alvo="buceta", vel=5, amp=0.30,
-    tamPica=1, gross=1, picaY=0, ajY=0, ajZ=0,
-    -- CORPO
-    sag=0.55, tamPeito=1, tamBunda=1, largQuadril=1,
+    tamPica=1, gross=1, picaY=0, ajY=0, ajZ=0, caimento=0.5,
     tesao=0, gozadas=0, molhada=0, suor=0, blush=0, ereccao=0.18,
     resp=0, pisca=0, trem=0, contra=0, engasgo=0, prof=0,
     vergonha=0, maos="livre", falaT=0,
@@ -96,8 +89,8 @@ local S = {
     masturbando=false, visto=false, vistoHa=0, mastT=0, mastOrg=0,
     prelim=false, prelimT=0, beijo=0,
     mordidaAlvo="ombro", netId=0, poseAnt=1,
-    boneca=nil, jigs={}, peleParts={}, nips={}, clit=nil, canal=nil,
-    seios={}, bundas={}, olhos={}, palpebras={}, marcas={}, remotos={},
+    boneca=nil, jigs={}, peleParts={}, nips={}, clit=nil, canal=nil, seios={},
+    olhos={}, palpebras={}, marcas={}, remotos={},
     picaRaiz=nil, picaWeld=nil, picaBase=nil, picaL=1, picaParts={}, precum=nil,
     precumW=nil, precumBase=nil, bocaInfW=nil, bocaInfBase=nil,
     gotas={}, pocoes={}, particulas={}, conns={}, aura=nil, leito=nil, roupa={},
@@ -156,7 +149,6 @@ end
 
 --==================== PECAS ====================
 local function peca(nome, pai, c0, tam, cor, forma, rotExtra, mat)
-    if typeof(c0) == "Vector3" then c0 = CFrame.new(c0) end   -- [A] aceita os dois
     local p = Instance.new("Part")
     p.Name=nome; p.Shape=forma or Enum.PartType.Ball; p.Size=tam
     p.Color=cor or COR.pele; p.Material=mat or Enum.Material.SmoothPlastic
@@ -175,10 +167,16 @@ local function motor(nome, p0, p1, c0, c1)
     return m
 end
 local function jig(weld, base, k, d, m, lim)
+    if not (weld and base) then return nil end
     local j = { w=weld, base=base, off=V3(), vel=V3(), k=k or 100, d=d or 12, m=m or 1, lim=lim or 0.28 }
     S.jigs[#S.jigs+1] = j; return j
 end
-local function pele(p, f) S.peleParts[#S.peleParts+1] = { p=p, base=p.Color, f=f or 1 } end
+-- DEFENSIVO: aceita nil sem estourar
+local function pele(p, f)
+    if p and p:IsA("BasePart") then
+        S.peleParts[#S.peleParts+1] = { p=p, base=p.Color, f=f or 1 }
+    end
+end
 
 --==================== FLUIDOS ====================
 local function fazerPoca(pos, cor, raio)
@@ -226,6 +224,7 @@ local function babar(pos,vel) fluido(pos,vel,Color3.fromRGB(235,248,255),0.085,f
 
 --==================== MARCAS ====================
 local function marca(pai, cf, tam, cor, dur)
+    if not (pai and pai.Parent) then return end
     local p = Instance.new("Part")
     p.Name="Neko_Marca"; p.Shape=Enum.PartType.Ball; p.Size=tam
     p.Color=cor or COR.marca; p.Material=Enum.Material.SmoothPlastic; p.Transparency=0.10
@@ -291,67 +290,67 @@ end
 print("[VB] 2 - helpers ok")
 
 --==================== POSES ====================
--- rot: yaw. IDENT = de costas pra voce / P(0,180,0) = de frente
--- pica: inclinacao da pica (0 = horizontal, negativo = pra baixo)
--- sup: offset Y do root ate a superficie de apoio (chao / cama)
+-- rot: yaw. IDENT = de costas / P(0,180,0) = de frente
+-- pica: inclinacao da pica nessa pose (0 = horizontal, negativo = pra baixo)
+-- sup: offset Y do root ate a superficie de apoio
 local POSES = {
-    { nome="De 4", rot=IDENT, ok={"buceta","bunda"}, pica=-22, sup=-3.054,
+    { nome="De 4", rot=IDENT, ok={"buceta","bunda"}, pica=-44, sup=-2.86,
       mot={ raiz=P(-85,0,0), cabeca=P(68,0,0),
             bracoE=P(84,0,-14), bracoD=P(84,0,14),
             cotoveloE=P(-12,0,0), cotoveloD=P(-12,0,0),
             quadrilE=P(84,0,-13), quadrilD=P(84,0,13),
             joelhoE=P(-24,0,0), joelhoD=P(-24,0,0) } },
 
-    { nome="Papai e Mamae", rot=P(0,180,0), ok={"buceta","bunda"}, pica=-28, sup=-0.42,
+    { nome="Papai e Mamae", rot=P(0,180,0), ok={"buceta","bunda"}, pica=-21, sup=-0.42,
       mot={ raiz=P(90,0,0), cabeca=P(-18,0,0),
             bracoE=P(62,0,-28), bracoD=P(62,0,28),
             cotoveloE=P(-42,0,0), cotoveloD=P(-42,0,0),
             quadrilE=P(30,0,-16), quadrilD=P(30,0,16),
             joelhoE=P(-72,0,0), joelhoD=P(-72,0,0) } },
 
-    { nome="Sentada", rot=P(0,180,0), ok={"buceta","bunda"}, pica=-43, sup=-0.93,
+    { nome="Sentada", rot=P(0,180,0), ok={"buceta","bunda"}, pica=-50, sup=-0.93,
       mot={ raiz=P(6,0,0), cabeca=P(-10,0,0),
             bracoE=P(30,0,-22), bracoD=P(30,0,22),
             cotoveloE=P(-52,0,0), cotoveloD=P(-52,0,0),
             quadrilE=P(80,0,-20), quadrilD=P(80,0,20),
             joelhoE=P(-78,0,0), joelhoD=P(-78,0,0) } },
 
-    { nome="Em pe", rot=P(0,180,0), ok={"buceta","bunda"}, pica=12, sup=-3.62, pes=true,
+    { nome="Em pe", rot=P(0,180,0), ok={"buceta","bunda"}, pica=-9, sup=-3.26, pes=true,
       mot={ raiz=IDENT, cabeca=P(-6,0,0),
             bracoE=P(20,0,-22), bracoD=P(20,0,22),
             cotoveloE=P(-70,0,0), cotoveloD=P(-70,0,0),
             quadrilE=P(2,0,-5), quadrilD=P(2,0,5),
             joelhoE=P(-5,0,0), joelhoD=P(-5,0,0) } },
 
-    { nome="Sentada nele", rot=P(0,180,0), vertical=true, ok={"buceta"}, pica=90, sup=-2.45,
+    { nome="Sentada nele", rot=P(0,180,0), vertical=true, ok={"buceta"}, pica=90, sup=-2.62,
       mot={ raiz=P(-6,0,0), cabeca=P(6,0,0),
             bracoE=P(-14,0,-30), bracoD=P(-14,0,30),
             cotoveloE=P(-58,0,0), cotoveloD=P(-58,0,0),
             quadrilE=P(48,0,-34), quadrilD=P(48,0,34),
             joelhoE=P(-92,0,0), joelhoD=P(-92,0,0) } },
 
-    { nome="Boquete", rot=P(0,180,0), oral=true, ok={"boca"}, pica=-14, sup=-1.94,
+    { nome="Boquete", rot=P(0,180,0), oral=true, ok={"boca"}, pica=8, sup=-1.79,
       mot={ raiz=P(-25,0,0), cabeca=P(-20,0,0),
             bracoE=P(50,0,-20), bracoD=P(50,0,20),
             cotoveloE=P(-40,0,0), cotoveloD=P(-40,0,0),
             quadrilE=P(25,0,-9), quadrilD=P(25,0,9),
             joelhoE=P(-80,0,0), joelhoD=P(-80,0,0) } },
 
-    { nome="69", rot=P(0,180,0), oral=true, pivPica=true, ok={"boca"}, pica=-46, sup=-0.42,
+    { nome="69", rot=P(0,180,0), oral=true, pivPica=true, ok={"boca"}, pica=0, sup=-0.45,
       mot={ raiz=P(90,0,0), cabeca=P(18,0,0),
             bracoE=P(70,0,-30), bracoD=P(70,0,30),
             cotoveloE=P(-30,0,0), cotoveloD=P(-30,0,0),
             quadrilE=P(-10,0,-34), quadrilD=P(-10,0,34),
             joelhoE=P(-60,0,0), joelhoD=P(-60,0,0) } },
 
-    { nome="Chupando ela", rot=IDENT, chupar=true, ok={"buceta"}, pica=0, sup=-0.42,
+    { nome="Chupando ela", rot=IDENT, chupar=true, ok={"buceta"}, pica=0, sup=-0.45,
       mot={ raiz=P(90,0,0), cabeca=P(-12,0,0),
             bracoE=P(80,0,-26), bracoD=P(80,0,26),
             cotoveloE=P(-26,0,0), cotoveloD=P(-26,0,0),
             quadrilE=P(24,0,-18), quadrilD=P(24,0,18),
             joelhoE=P(-66,0,0), joelhoD=P(-66,0,0) } },
 
-    { nome="No colo", rot=IDENT, ok={"buceta"}, pica=-26, sup=-3.11,
+    { nome="No colo", rot=IDENT, ok={"buceta"}, pica=-30, sup=-3.15,
       mot={ raiz=P(-70,0,0), cabeca=P(44,0,0),
             bracoE=P(58,0,-16), bracoD=P(58,0,16),
             cotoveloE=P(-34,0,0), cotoveloD=P(-34,0,0),
@@ -372,57 +371,16 @@ local function alvoLocal(pose, alvo)
     end
 end
 
---==================== CAIMENTO / CORPO ====================
-local function cfSeioBase(lado)
-    local sg = S.sag
-    return CFrame.new(lado*0.38, 0.26 - sg*0.24, -0.46 + sg*0.03) * P(-16 - sg*26, lado*-14, lado*-14)
-end
-local function cfBundaBase(lado)
-    local sg = S.sag
-    return CFrame.new(lado*0.40, -0.68 - sg*0.12, 0.42 + sg*0.05) * P(12 + sg*14, lado*10, 0)
-end
-
-local function aplicarCorpo()
-    if not S.boneca then return end
-    local sg, tp, tb, lq = S.sag, S.tamPeito, S.tamBunda, S.QuadrilLargura or S.largQuadril
-    for _,s in ipairs(S.seios) do
-        if s.p.Parent then
-            local cf = cfSeioBase(s.lado)
-            s.baseCF = cf
-            if s.j then s.j.base = cf end
-            local esc = tp * (1 + sg*0.10)
-            s.base = V3(RAIO_SEIO*2.0*esc, RAIO_SEIO*1.95*esc*(1+sg*0.12), RAIO_SEIO*2.15*esc)
-            s.p.Size = s.base
-            if s.baixo and s.baixo.Parent then
-                s.baixo.Size = V3(RAIO_SEIO*1.7*esc*(1+sg*0.10), RAIO_SEIO*1.5*esc*(1+sg*0.18), RAIO_SEIO*1.9*esc)
-            end
-        end
-    end
-    for _,b in ipairs(S.bundas) do
-        if b.p.Parent then
-            local cf = cfBundaBase(b.lado)
-            if b.j then b.j.base = cf end
-            b.base = V3(RAIO_BUNDA*2.0*tb, RAIO_BUNDA*1.85*tb*(1+sg*0.14), RAIO_BUNDA*2.0*tb)
-            b.p.Size = b.base
-            if b.baixo and b.baixo.Parent then
-                b.baixo.Size = V3(RAIO_BUNDA*1.75*tb, RAIO_BUNDA*1.45*tb*(1+sg*0.20), RAIO_BUNDA*1.7*tb)
-            end
-        end
-    end
-    if S.boneca.quadrilPart and S.boneca.quadrilPart.Parent then
-        S.boneca.quadrilPart.Size = V3(1.94*lq, 0.50, 0.94*lq)
-    end
-end
-
 --==================== BONECA (R15) ====================
 local function criarBoneca()
-    if S.boneca and S.boneca.model.Parent then S.boneca.model:Destroy() end
-    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.bundas,S.marcas =
-        {},{},{},{},{},{},{},{},{},{},{}
+    if S.boneca and S.boneca.model and S.boneca.model.Parent then S.boneca.model:Destroy() end
+    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.marcas =
+        {},{},{},{},{},{},{},{},{},{}
     local char = LP and LP.Character; if not char then return end
     local hrpJ = char:FindFirstChild("HumanoidRootPart"); if not hrpJ then return end
 
     local model = Instance.new("Model"); model.Name="VeniceBoneca"
+    model.Parent = WS        -- << parenteia CEDO: build parcial fica visivel
 
     local lv = hrpJ.CFrame.LookVector
     local dirF = V3(lv.X,0,lv.Z); if dirF.Magnitude<0.01 then dirF=V3(0,0,-1) end; dirF=dirF.Unit
@@ -432,8 +390,8 @@ local function criarBoneca()
     local base = CFrame.lookAt(V3(px, gy+ALT_ROOT, pz), V3(px, gy+ALT_ROOT, pz) - dirF)
 
     local cor = COR.pele
-    local sg = S.sag
     local r, rb = RAIO_SEIO, RAIO_BUNDA
+    local sag = S.caimento or 0.5
 
     local function parte(nome, size, cf, c, forma, trans)
         local p = Instance.new("Part")
@@ -447,13 +405,16 @@ local function criarBoneca()
         return p
     end
 
-    local hrp    = parte("HumanoidRootPart", V3(2.0,2.0,1.0), base, cor, nil, 1); hrp.Anchored = true
-    local tronco = parte("UpperTorso", V3(1.6,1.6,1.0), base, cor, nil, 1)
-    local cabeca = parte("Head", V3(1.36,1.42,1.42), base*CFrame.new(0,1.55,0), cor, Enum.PartType.Ball)
+    -- ===== R15: nomes e hierarquia =====
+    local hrp      = parte("HumanoidRootPart", V3(1.6,1.6,1.0), base, cor, nil, 1); hrp.Anchored = true
+    local tronco   = parte("UpperTorso", V3(1.6,1.6,1.0), base, cor, nil, 1)
+    local lowerT   = parte("LowerTorso", V3(1.6,1.6,1.0), base, cor, nil, 1)
+    local cabeca   = parte("Head", V3(1.36,1.42,1.42), base*CFrame.new(0,1.55,0), cor, Enum.PartType.Ball)
 
     local M = {}
-    M.raiz   = motor("Root", hrp, tronco, IDENT, IDENT)
+    M.raiz   = motor("RootJoint", hrp, lowerT, IDENT, IDENT)
     M.cabeca = motor("Neck", tronco, cabeca, CFrame.new(0,0.98,0), CFrame.new(0,-0.52,0))
+    M.cintura= motor("Waist", lowerT, tronco, CFrame.new(0,0.30,0), CFrame.new(0,-0.30,0))
 
     local function skin(nome,pai,c0,tam,c2,forma,extra,f)
         local p,w = peca(nome,pai,c0,tam,c2 or cor,forma,extra); pele(p,f or 1); return p,w
@@ -466,49 +427,59 @@ local function criarBoneca()
     skin("ClaviculaE", tronco, CFrame.new(-0.48,0.78,-0.34), V3(0.62,0.13,0.16))
     skin("ClaviculaD", tronco, CFrame.new( 0.48,0.78,-0.34), V3(0.62,0.13,0.16))
     skin("Ombros",   tronco, CFrame.new(0,0.80,0),  V3(1.76,0.30,0.86))
-    local quadrilP  = skin("LowerTorso", tronco, CFrame.new(0,-0.62,0), V3(1.94,0.50,0.94))
+    skin("Quadril",  lowerT, CFrame.new(0,-0.40,0), V3(1.94,0.50,0.94))
     skin("Pescoco",  tronco, CFrame.new(0,0.96,0),  V3(0.52,0.34,0.52))
     peca("Umbigo",   tronco, CFrame.new(0,-0.34,-0.44), V3(0.11,0.13,0.08), Color3.fromRGB(214,168,152))
 
-    -- seios com caimento
+    -- ===== SEIOS com caimento =====
     for _,lado in ipairs({-1,1}) do
-        local cf = cfSeioBase(lado)
-        local esc = S.tamPeito * (1 + sg*0.10)
-        local seio, wS = peca("Seio", tronco, cf, V3(r*2.0*esc, r*1.95*esc*(1+sg*0.12), r*2.15*esc), cor)
+        local cf = CFrame.new(lado*0.38, 0.30 - 0.18*sag, -0.46)
+                 * P(-16 - 36*sag, lado*-14, lado*-14 - lado*12*sag)
+        local seio, wS = peca("Seio", tronco, cf,
+            V3(r*2.00, r*1.72 + r*0.38*sag, r*2.10), cor)
         pele(seio,1.2)
-        local j = jig(wS, cf, 78, 10.5, 1.0, 0.30 + sg*0.10)
-        local baixo = peca("SeioBaixo", seio,
-            CFrame.new(0,-r*(0.36+sg*0.26),-r*0.04),
-            V3(r*1.7*esc*(1+sg*0.10), r*1.5*esc*(1+sg*0.18), r*1.9*esc), cor); pele(baixo,1.2)
-        peca("Areola", seio, CFrame.new(0,-r*(0.06+sg*0.10),-r*0.90), V3(r*0.84,r*0.84,r*0.22), COR.areola)
-        local bico = peca("Bico", seio, CFrame.new(0,-r*(0.06+sg*0.10),-r*1.00),
-                          V3(r*0.30,r*0.32,r*0.34), COR.mamilo, Enum.PartType.Cylinder, P(0,90,0))
+        jig(wS, cf, 76 - 20*sag, 10.5 - 1.5*sag, 1.10 + 0.55*sag, 0.26 + 0.10*sag)
+
+        local lobeCF = CFrame.new(0, -r*(0.30 + 0.66*sag), -r*(0.04 + 0.16*sag))
+        local baixo, wB = peca("SeioBaixo", seio, lobeCF,
+            V3(r*1.72, r*(1.40 + 1.00*sag), r*1.85), cor)
+        pele(baixo,1.2)
+        jig(wB, lobeCF, 44 - 14*sag, 8.0 - 1.5*sag, 1.45 + 0.75*sag, 0.34 + 0.12*sag)
+
+        local nl = CFrame.new(0, -r*(0.08 + 0.10*sag), -r*(0.86 + 0.06*sag))
+        peca("Areola", baixo, nl*CFrame.new(0,0,-r*0.04), V3(r*0.86,r*0.86,r*0.22), COR.areola)
+        local bico = peca("Bico", baixo, nl*CFrame.new(0,0,-r*0.14), V3(r*0.30,r*0.32,r*0.34),
+                          COR.mamilo, Enum.PartType.Cylinder, P(0,90,0))
         S.nips[#S.nips+1] = { p=bico, base=bico.Size, cor=COR.mamilo }
-        local ponta = peca("BicoPonta", seio, CFrame.new(0,-r*(0.06+sg*0.10),-r*1.14),
-                           V3(r*0.22,r*0.22,r*0.22), COR.mamilo)
+        local ponta = peca("BicoPonta", baixo, nl*CFrame.new(0,0,-r*0.28), V3(r*0.22,r*0.22,r*0.22), COR.mamilo)
         S.nips[#S.nips+1] = { p=ponta, base=ponta.Size, cor=COR.mamilo }
-        S.seios[#S.seios+1] = { p=seio, baixo=baixo, base=seio.Size, w=wS, j=j, cfBase=cf, lado=lado }
+        S.seios[#S.seios+1] = { p=seio, base=seio.Size, w=wS, baseCF=cf, lado=lado }
     end
 
-    -- bunda com caimento
+    -- ===== BUNDA com caimento =====
     for _,lado in ipairs({-1,1}) do
-        local cf = cfBundaBase(lado)
-        local g,wG = peca("Bunda", tronco, cf,
-            V3(rb*2.0*S.tamBunda, rb*1.85*S.tamBunda*(1+sg*0.14), rb*2.0*S.tamBunda), cor)
+        local cf = CFrame.new(lado*0.40, -0.30 - 0.16*sag, 0.40)
+                 * P(12 + 20*sag, lado*10, lado*(6 + 8*sag))
+        local g,wG = peca("Bunda", lowerT, cf,
+            V3(rb*2.00, rb*1.70 + rb*0.30*sag, rb*2.00), cor)
         pele(g,1.2)
-        local j = jig(wG, cf, 96, 12, 0.95, 0.26 + sg*0.08)
-        local baixo = peca("BundaBaixo", g, CFrame.new(0,-rb*(0.32+sg*0.18),rb*0.05),
-            V3(rb*1.75*S.tamBunda, rb*1.45*S.tamBunda*(1+sg*0.20), rb*1.7*S.tamBunda), cor); pele(baixo,1.2)
-        S.bundas[#S.bundas+1] = { p=g, baixo=baixo, base=g.Size, w=wG, j=j, cfBase=cf, lado=lado }
-    end
-    peca("Fenda",    tronco, CFrame.new(0,-0.72,0.62), V3(0.11,0.86,0.34), COR.labio)
-    peca("FendaSup", tronco, CFrame.new(0,-0.44,0.50), V3(0.15,0.42,0.30), COR.labio)
+        jig(wG, cf, 96 - 28*sag, 12 - 2*sag, 0.95 + 0.55*sag, 0.24 + 0.10*sag)
 
+        local lobeCF = CFrame.new(0, -rb*(0.34 + 0.62*sag), rb*(0.02 + 0.10*sag))
+        local baixo, wB = peca("BundaBaixo", g, lobeCF,
+            V3(rb*1.75, rb*(1.35 + 0.90*sag), rb*1.70), cor)
+        pele(baixo,1.2)
+        jig(wB, lobeCF, 58 - 20*sag, 9.0 - 1.5*sag, 1.30 + 0.65*sag, 0.30 + 0.12*sag)
+    end
+    peca("Fenda",    lowerT, CFrame.new(0,-0.52,0.60), V3(0.11,0.80,0.32), COR.labio)
+    peca("FendaSup", lowerT, CFrame.new(0,-0.24,0.48), V3(0.15,0.40,0.28), COR.labio)
+
+    -- ===== VULVA =====
     local rc = 0.33
-    local monte = peca("Monte", tronco, CFrame.new(0,-0.66,-0.50)*P(-16,0,0), V3(rc*2.3,rc*1.8,rc*1.0), cor)
+    local monte = peca("Monte", lowerT, CFrame.new(0,-0.46,-0.48)*P(-16,0,0), V3(rc*2.3,rc*1.8,rc*1.0), cor)
     pele(monte,1.4)
     local vulva = { parts={monte}, labios={}, rc=rc }
-    local function addV(p) vulva.parts[#vulva.parts+1]=p end
+    local function addV(p) if p then vulva.parts[#vulva.parts+1]=p end end
     addV(peca("MonteTopo", monte, CFrame.new(0,rc*0.30,-rc*0.05), V3(rc*2.0,rc*1.1,rc*0.9), cor))
     for _,lado in ipairs({-1,1}) do
         local cfl = CFrame.new(lado*rc*0.42,-rc*0.22,-rc*0.30)*P(0,lado*-9,0)
@@ -523,8 +494,9 @@ local function criarBoneca()
     addV(peca("ClitCapuz", monte, CFrame.new(0,rc*0.52,-rc*0.40), V3(rc*0.48,rc*0.32,rc*0.32), COR.labio))
     local clit = peca("Clit", monte, CFrame.new(0,rc*0.52,-rc*0.56), V3(rc*0.22,rc*0.22,rc*0.24), COR.clit); addV(clit)
     S.clit, S.canal = clit, canal
-    peca("Cu", tronco, CFrame.new(0,-0.70,0.60), V3(rc*0.36,rc*0.36,rc*0.18), COR.interno)
+    peca("Cu", lowerT, CFrame.new(0,-0.50,0.58), V3(rc*0.36,rc*0.36,rc*0.18), COR.interno)
 
+    -- ===== ROSTO =====
     local cab = cabeca
     peca("Cranio", cab, CFrame.new(0,0.12,0.06), V3(1.40,1.44,1.44), cor, Enum.PartType.Ball)
     peca("Testa",  cab, CFrame.new(0,0.34,-0.30), V3(1.16,0.52,0.80), cor)
@@ -559,50 +531,58 @@ local function criarBoneca()
         jig(w, cf, 42, 6.5, 1.3, 0.42)
     end
 
-    local function membro(nome, pai, junta, len, raio, nm, nomeParte)
-        local osso = parte(nomeParte, V3(raio*0.95,len,raio*0.95), base, cor, nil, 1)
+    -- ===== MEMBROS (R15) =====
+    local function membro(nome, pai, junta, len, raio, ladoNome)
+        local osso = parte("Bone"..nome..ladoNome, V3(raio*0.95,len,raio*0.95), base, cor, nil, 1)
         osso.Transparency = 1
-        local m = motor("M_"..nome..nm, pai, osso, CFrame.new(junta), CFrame.new(0,len/2,0))
-        local vis = peca("Vis"..nome..nm, osso, IDENT, V3(len*1.02, raio*2, raio*2), cor, Enum.PartType.Cylinder, P(0,0,90))
+        local m = motor("M_"..nome..ladoNome, pai, osso, CFrame.new(junta), CFrame.new(0,len/2,0))
+        local vis = peca("Vis"..nome..ladoNome, osso, IDENT, V3(len*1.02, raio*2, raio*2), cor, Enum.PartType.Cylinder, P(0,0,90))
         pele(vis)
         return osso, m
     end
 
     for _,lado in ipairs({-1,1}) do
-        local nm = lado>0 and "D" or "E"
-        local R  = lado>0 and "Right" or "Left"
-        peca("OmbroJ"..nm, tronco, CFrame.new(lado*0.80,0.72,0), V3(0.46,0.46,0.46), cor); pele(_)
-        local braco, mBraco = membro("Braco", tronco, V3(lado*0.80,0.72,0), LEN_BRACO, 0.23, nm, R.."UpperArm")
-        M["braco"..nm] = mBraco; mBraco.Name = R.."Shoulder"
-        peca("CotoveloJ"..nm, braco, CFrame.new(0,-LEN_BRACO/2,0), V3(0.38,0.38,0.38), cor)
-        local ante, mAnte = membro("Antebraco", braco, V3(0,-LEN_BRACO/2,0), LEN_ANTEBRACO, 0.19, nm, R.."LowerArm")
-        M["cotovelo"..nm] = mAnte; mAnte.Name = R.."Elbow"
-        local mao = peca(R.."Hand", ante, CFrame.new(0,-LEN_ANTEBRACO/2-0.14,0), V3(0.30,0.34,0.22), cor)
+        local ladoNome = lado>0 and "R" or "L"
+
+        -- BRACO
+        local ombroJ = peca("ShoulderJ"..ladoNome, tronco, V3(lado*0.80,0.72,0), V3(0.46,0.46,0.46), cor)
+        pele(ombroJ)                                   -- <<< FIX (era pele(_))
+        local braco, mBraco = membro("UpperArm", tronco, V3(lado*0.80,0.72,0), LEN_BRACO, 0.23, ladoNome)
+        M["braco"..ladoNome] = mBraco
+        local cotJ = peca("ElbowJ"..ladoNome, braco, CFrame.new(0,-LEN_BRACO/2,0), V3(0.38,0.38,0.38), cor)
+        pele(cotJ)
+        local ante, mAnte = membro("LowerArm", braco, V3(0,-LEN_BRACO/2,0), LEN_ANTEBRACO, 0.19, ladoNome)
+        M["cotovelo"..ladoNome] = mAnte
+        local mao = peca("Hand"..ladoNome, ante, CFrame.new(0,-LEN_ANTEBRACO/2-0.14,0), V3(0.30,0.34,0.22), cor)
         pele(mao)
         for f=1,4 do
             local fx=(f-2.5)*0.085
             local cf = CFrame.new(fx,-0.26,-0.02)
-            local _, w = peca("Dedo"..f, mao, cf, V3(0.07,0.32,0.09), cor)
+            local _, w = peca("Dedo"..f..ladoNome, mao, cf, V3(0.07,0.32,0.09), cor)
             S.dedos[#S.dedos+1] = { w=w, base=cf }
-            peca("Unha"..f, mao, cf*CFrame.new(0,-0.19,-0.03), V3(0.06,0.08,0.06), COR.unha)
+            peca("Unha"..f..ladoNome, mao, cf*CFrame.new(0,-0.19,-0.03), V3(0.06,0.08,0.06), COR.unha)
         end
-        peca("Polegar", mao, CFrame.new(lado*-0.17,-0.08,-0.02), V3(0.09,0.24,0.09), cor, Enum.PartType.Block, P(0,0,lado*-30))
+        peca("Polegar"..ladoNome, mao, CFrame.new(lado*-0.17,-0.08,-0.02), V3(0.09,0.24,0.09), cor, Enum.PartType.Block, P(0,0,lado*-30))
 
-        peca("QuadrilJ"..nm, tronco, CFrame.new(lado*0.48,-0.62,0), V3(0.62,0.62,0.62), cor)
-        local coxa, mCoxa = membro("Coxa", tronco, V3(lado*0.48,-0.62,0), LEN_COXA, 0.42, nm, R.."UpperLeg")
-        M["quadril"..nm] = mCoxa; mCoxa.Name = R.."Hip"
-        peca("JoelhoJ"..nm, coxa, CFrame.new(0,-LEN_COXA/2,0), V3(0.54,0.54,0.54), cor)
-        local canela, mCanela = membro("Canela", coxa, V3(0,-LEN_COXA/2,0), LEN_CANELA, 0.33, nm, R.."LowerLeg")
-        M["joelho"..nm] = mCanela; mCanela.Name = R.."Knee"
-        local torn = peca("Tornozelo"..nm, canela, CFrame.new(0,-LEN_CANELA/2-0.10,0), V3(0.36,0.36,0.36), cor); pele(torn)
-        local pe = peca(R.."Foot", torn, CFrame.new(0,-0.14,-0.22), V3(0.42,0.24,0.84), cor); pele(pe)
-        peca("Dedos"..nm, pe, CFrame.new(0,0,-0.43), V3(0.42,0.22,0.16), cor)
+        -- PERNA
+        local quaJ = peca("HipJ"..ladoNome, lowerT, V3(lado*0.48,-0.30,0), V3(0.62,0.62,0.62), cor)
+        pele(quaJ)
+        local coxa, mCoxa = membro("UpperLeg", lowerT, V3(lado*0.48,-0.30,0), LEN_COXA, 0.42, ladoNome)
+        M["quadril"..ladoNome] = mCoxa
+        local joeJ = peca("KneeJ"..ladoNome, coxa, CFrame.new(0,-LEN_COXA/2,0), V3(0.54,0.54,0.54), cor)
+        pele(joeJ)
+        local canela, mCanela = membro("LowerLeg", coxa, V3(0,-LEN_COXA/2,0), LEN_CANELA, 0.33, ladoNome)
+        M["joelho"..ladoNome] = mCanela
+        local torn = peca("Ankle"..ladoNome, canela, CFrame.new(0,-LEN_CANELA/2-0.10,0), V3(0.36,0.36,0.36), cor); pele(torn)
+        local pe = peca("Foot"..ladoNome, torn, CFrame.new(0,-0.14,-0.22), V3(0.42,0.24,0.84), cor); pele(pe)
+        peca("Toes"..ladoNome, pe, CFrame.new(0,0,-0.43), V3(0.42,0.22,0.16), cor)
     end
 
     local baseJ = {}
     for k, m in pairs(M) do baseJ[k] = m.C0 end
 
     local function suor(pai, tam)
+        if not pai then return end
         local at = Instance.new("Attachment"); at.Parent = pai
         local pe = Instance.new("ParticleEmitter")
         pe.Texture="rbxassetid://243660364"
@@ -617,30 +597,19 @@ local function criarBoneca()
     suor(tronco:FindFirstChild("Peito") or tronco, 0.10)
     suor(cab, 0.08)
 
-    -- Humanoid R15
-    local hum = Instance.new("Humanoid")
-    hum.Name = "Humanoid"
-    hum.RigType = Enum.HumanoidRigType.R15
-    hum.MaxHealth = math.huge; hum.Health = math.huge
-    hum.BreakJointsOnDeath = false
-    hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-    hum.WalkSpeed = 0; hum.JumpPower = 0; hum.AutoRotate = false
-    hum.Parent = model
-
-    model.PrimaryPart = hrp; model.Parent = WS
-    S.boneca = { model=model, hrp=hrp, tronco=tronco, cabeca=cabeca, motores=M, baseJ=baseJ,
-                 vulva=vulva, bocaSup=bocaSup, bocaInf=bocaInf, quadrilPart=quadrilP }
+    model.PrimaryPart = hrp
+    S.boneca = { model=model, hrp=hrp, tronco=tronco, lowerTorso=lowerT, cabeca=cabeca,
+                 motores=M, baseJ=baseJ, vulva=vulva, bocaSup=bocaSup, bocaInf=bocaInf }
     S.lastPos = hrp.CFrame
     local ok, err = pcall(construirRoupa)
     if not ok then logErr("roupa", err) end
-    aplicarCorpo()
 end
 
 local function removerBoneca()
     if S.boneca and S.boneca.model then pcall(function() S.boneca.model:Destroy() end) end
     S.boneca=nil; S.sexo=false; S.prelim=false; S.masturbando=false
-    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.bundas,S.marcas =
-        {},{},{},{},{},{},{},{},{},{},{}
+    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.marcas =
+        {},{},{},{},{},{},{},{},{},{}
 end
 
 --==================== ROUPA ====================
@@ -652,26 +621,27 @@ construirRoupa = function()
         S.roupa[nome] = g; builder(g, tr)
     end
     local function add(g, pai, c0, tam, cor, forma, extra, mat)
+        if not pai then return nil end
         local p,w = peca("Roupa_"..pai.Name, pai, c0, tam, cor, forma, extra, mat or Enum.Material.Fabric)
         g.parts[#g.parts+1] = { p=p, w=w }
         return p
     end
     grupo("sutia", function(g, tr)
-        add(g, tr, CFrame.new(0,0.32 - S.sag*0.10,0), V3(1.76,0.30,0.92), COR.sutia)
-        add(g, tr, CFrame.new(0,0.58 - S.sag*0.10,0), V3(1.74,0.16,0.90), COR.sutia)
+        add(g, tr, CFrame.new(0,0.32,0), V3(1.76,0.30,0.92), COR.sutia)
+        add(g, tr, CFrame.new(0,0.58,0), V3(1.74,0.16,0.90), COR.sutia)
         for _,lado in ipairs({-1,1}) do
             local seio = nil
             for _,s in ipairs(S.seios) do if s.lado==lado then seio = s.p end end
             if seio then
                 add(g, seio, CFrame.new(0,-RAIO_SEIO*0.06,-RAIO_SEIO*0.22),
-                    V3(RAIO_SEIO*2.10,RAIO_SEIO*2.04,RAIO_SEIO*2.22), COR.sutia)
+                    V3(RAIO_SEIO*2.08,RAIO_SEIO*2.02,RAIO_SEIO*2.20), COR.sutia)
             end
         end
     end)
     grupo("calcinha", function(g, tr)
-        add(g, tr, CFrame.new(0,-0.60,0), V3(2.00,0.60,1.00), COR.calcinha)
-        add(g, tr, CFrame.new(0,-0.68,-0.56), V3(0.90,0.44,0.28), COR.calcinha)
-        g.mancha = add(g, tr, CFrame.new(0,-0.68,-0.68), V3(0.42,0.26,0.10),
+        add(g, tr, CFrame.new(0,-0.42,0), V3(2.00,0.60,1.00), COR.calcinha)
+        add(g, tr, CFrame.new(0,-0.50,-0.54), V3(0.90,0.44,0.28), COR.calcinha)
+        g.mancha = add(g, tr, CFrame.new(0,-0.50,-0.66), V3(0.42,0.26,0.10),
                        Color3.fromRGB(220,205,225), nil, nil, Enum.Material.Glass)
     end)
     grupo("blusa", function(g, tr)
@@ -679,7 +649,7 @@ construirRoupa = function()
         add(g, tr, CFrame.new(0,-0.28,0), V3(1.54,0.60,0.92), COR.blusa)
     end)
     grupo("saia", function(g, tr)
-        add(g, tr, CFrame.new(0,-0.86,0), V3(0.52,2.04,2.04), COR.saia,
+        add(g, tr, CFrame.new(0,-0.58,0), V3(0.52,2.04,2.04), COR.saia,
             Enum.PartType.Cylinder, P(0,0,90))
     end)
 end
@@ -750,19 +720,19 @@ local function rasgarTudo()
     end
 end
 
---==================== PICA ====================
+--==================== PICA (segmentos sobrepostos) ====================
 local function criarPica()
     local char = LP and LP.Character; if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local lt  = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso") or hrp
     if not (hrp and lt) then return end
     local sz = lt.Size
-    local L = math.max(0.60, sz.X*0.55*S.tamPica)
-    local d = math.max(0.10, sz.X*0.075*S.gross)
-    local baseCF = CFrame.new(0, PICA_BASE_Y + S.picaY, PICA_BASE_Z) * P(-88,0,0)
+    local L = math.max(0.60, sz.X*0.46*S.tamPica)
+    local d = math.max(0.11, sz.X*0.075*S.gross)
+    local baseCF = CFrame.new(0, PICA_BASE_Y + S.picaY, PICA_BASE_Z) * P(-90,0,0)
 
     local raiz = Instance.new("Part")
-    raiz.Name="Neko_PicaRaiz"; raiz.Size=V3(0.1,0.1,0.1); raiz.Shape=Enum.PartType.Ball
+    raiz.Name="Neko_PicaRaiz"; raiz.Size=V3(0.12,0.12,0.12); raiz.Shape=Enum.PartType.Ball
     raiz.Color=COR.pica; raiz.Material=Enum.Material.SmoothPlastic
     raiz.Anchored,raiz.CanCollide,raiz.Massless,raiz.CastShadow=false,false,true,false
     raiz.CanQuery,raiz.CanTouch=false,false; raiz.Parent=char
@@ -770,31 +740,37 @@ local function criarPica()
     w.Part0,w.Part1=hrp,raiz; w.C0=baseCF; w.Parent=hrp
 
     local partes = {}
-    local function pp(nome,c0,tam,c,forma,extra)   -- [B] devolve Part E Weld
-        local p,pw = peca(nome,raiz,c0,tam,c,forma,extra)
-        partes[#partes+1]=p
-        return p, pw
+    local function pp(nome,c0,tam,c,forma,extra)
+        local p=peca(nome,raiz,c0,tam,c,forma,extra); partes[#partes+1]=p; return p
     end
-    pp("Neko_Saco", CFrame.new(0,-L*0.10,0.02), V3(d*2.2,d*1.3,d*1.6), COR.pica)
+
+    -- saco + testiculos (encostados na base)
+    pp("Neko_Saco",  CFrame.new(0, -L*0.06, 0.02), V3(d*2.4, d*1.5, d*1.8), COR.pica)
     for _,lado in ipairs({-1,1}) do
-        pp("Neko_Bola", CFrame.new(lado*d*0.95,-L*0.12,0.03)*P(0,0,lado*12), V3(d*1.30,d*1.42,d*1.30), COR.pica)
+        pp("Neko_Bola", CFrame.new(lado*d*1.00, -L*0.08, 0.03)*P(0,0,lado*12), V3(d*1.35,d*1.48,d*1.35), COR.pica)
     end
+
+    -- haste: 3 segmentos SOBREPOSTOS (sem vao)
     local segs = {
-        {y=0.10, l=0.34, r=1.05, cz=0.00},
-        {y=0.42, l=0.32, r=1.00, cz=0.02},
-        {y=0.72, l=0.28, r=0.95, cz=0.05},
+        { y=0.14, l=0.42, r=1.05, cz=0.000 },
+        { y=0.46, l=0.38, r=1.00, cz=0.018 },
+        { y=0.76, l=0.36, r=0.96, cz=0.040 },
     }
     for i,s in ipairs(segs) do
-        pp("Neko_Haste"..i, CFrame.new(0,L*s.y,s.cz*L)*P(0,0,90 + i*1.6),
+        pp("Neko_Haste"..i, CFrame.new(0, L*s.y, s.cz*L)*P(0,0,90 + i*1.7),
            V3(L*s.l, d*2*s.r, d*2*s.r), COR.pica, Enum.PartType.Cylinder)
     end
-    pp("Neko_Veia1", CFrame.new(d*0.70,L*0.34,-d*0.55)*P(0,0,90), V3(L*0.50,d*0.18,d*0.18), COR.veia, Enum.PartType.Cylinder)
-    pp("Neko_Veia2", CFrame.new(-d*0.70,L*0.24,-d*0.50)*P(0,0,90), V3(L*0.36,d*0.14,d*0.14), COR.veia, Enum.PartType.Cylinder)
-    pp("Neko_Veia3", CFrame.new(d*0.20,L*0.58,-d*0.80)*P(0,0,88), V3(L*0.26,d*0.11,d*0.11), COR.veia, Enum.PartType.Cylinder)
-    pp("Neko_Coroa", CFrame.new(0,L*0.94,0), V3(d*2.30,d*0.42,d*2.30), COR.glande)
-    local cab = pp("Neko_Cabeca", CFrame.new(0,L*1.02,0), V3(d*2.50,d*1.30,d*2.55), COR.glande)
-    pp("Neko_Uretra", CFrame.new(0,L*1.13,-d*0.30), V3(d*0.30,d*0.14,d*0.36), Color3.fromRGB(206,120,124))
-    local precum, precumW = pp("Neko_Precum", CFrame.new(0,L*1.16,-d*0.42), V3(d*0.30,d*0.34,d*0.30), COR.gota)
+
+    -- veias
+    pp("Neko_Veia1", CFrame.new( d*0.72, L*0.34, -d*0.55)*P(0,0,90), V3(L*0.52,d*0.19,d*0.19), COR.veia, Enum.PartType.Cylinder)
+    pp("Neko_Veia2", CFrame.new(-d*0.72, L*0.24, -d*0.50)*P(0,0,90), V3(L*0.38,d*0.15,d*0.15), COR.veia, Enum.PartType.Cylinder)
+    pp("Neko_Veia3", CFrame.new( d*0.22, L*0.58, -d*0.80)*P(0,0,88), V3(L*0.28,d*0.12,d*0.12), COR.veia, Enum.PartType.Cylinder)
+
+    -- coroa + glande (encostados no fim da haste 3)
+    pp("Neko_Coroa", CFrame.new(0, L*0.93, 0), V3(d*2.35, d*0.50, d*2.35), COR.glande)
+    local cab = pp("Neko_Cabeca", CFrame.new(0, L*1.02, 0), V3(d*2.55, d*1.45, d*2.60), COR.glande)
+    pp("Neko_Uretra", CFrame.new(0, L*1.13, -d*0.32), V3(d*0.32,d*0.15,d*0.38), Color3.fromRGB(206,120,124))
+    local precum, precumW = pp("Neko_Precum", CFrame.new(0, L*1.16, -d*0.44), V3(d*0.32,d*0.36,d*0.32), COR.gota)
     precum.Material = Enum.Material.Glass; precum.Transparency = 1
 
     S.picaRaiz,S.picaWeld,S.picaBase,S.picaL = raiz,w,baseCF,L
@@ -955,13 +931,15 @@ local function aplicarJigs(dt)
     local gravL = cur:VectorToObjectSpace(V3(0,-4.2,0))
     for i=#S.jigs,1,-1 do
         local j = S.jigs[i]
-        if not (j.w and j.w.Parent) then table.remove(S.jigs,i)
+        if not (j.w and j.w.Parent and j.w.Part0) then table.remove(S.jigs,i)
         else
             local f = j.off*-j.k - j.vel*j.d + (gravL-accL)*j.m
             j.vel = j.vel + f*dt; j.off = j.off + j.vel*dt
             local m = j.off.Magnitude
             if m > j.lim then j.off = j.off*(j.lim/m) end
-            j.w.C0 = CFrame.new(j.off) * j.base
+            local offMundo = cur:VectorToWorldSpace(j.off)
+            local offLocal = j.w.Part0.CFrame:VectorToObjectSpace(offMundo)
+            j.w.C0 = CFrame.new(offLocal) * j.base
         end
     end
 end
@@ -974,11 +952,11 @@ local function atualizarPes(dt)
     if S.sexo and not (pose and pose.pes) then return end
     local cf = b.hrp.CFrame
     for _, lado in ipairs({-1,1}) do
-        local nm = lado>0 and "D" or "E"
-        local Jw = (cf * CFrame.new(lado*0.48,-0.62,0)).Position
-        local res = WS:Raycast(Jw + V3(0,0.5,0), V3(0,-7.0,0))
+        local nm = lado>0 and "R" or "L"
+        local Jw = (cf * CFrame.new(lado*0.48,-0.30,0)).Position
+        local res = WS:Raycast(Jw + V3(0,0.5,0), V3(0,-6.0,0))
         local alvoMundo = res and (res.Position + V3(0,0.28,0)) or (Jw + V3(0, -(LEN_COXA+LEN_CANELA-0.10), 0))
-        local J = V3(lado*0.48,-0.62,0)
+        local J = V3(lado*0.48,-0.30,0)
         setIK(b.motores["quadril"..nm], b.motores["joelho"..nm], J, cf:PointToObjectSpace(alvoMundo),
               LEN_COXA, LEN_CANELA, J + V3(lado*0.35, 0.15, -1.6))
     end
@@ -998,12 +976,12 @@ local function atualizarMaos(dt)
         return
     end
     for _, lado in ipairs({-1,1}) do
-        local nm = lado>0 and "D" or "E"
+        local nm = lado>0 and "R" or "L"
         local J = V3(lado*0.80, 0.72, 0)
         local T
         if modo=="peito" or modo=="cobrir" then
-            T = V3(lado*0.40, 0.26 - S.sag*0.20, modo=="cobrir" and -0.84 or -0.80)
-        elseif modo=="bunda" then T = V3(lado*0.48, -0.70, 0.62)
+            T = V3(lado*0.40, 0.26, modo=="cobrir" and -0.84 or -0.80)
+        elseif modo=="bunda" then T = V3(lado*0.48, -0.40, 0.62)
         else T = V3(lado*0.55, -0.30, -0.55) end
         setIK(b.motores["braco"..nm], b.motores["cotovelo"..nm], J, T, LEN_BRACO, LEN_ANTEBRACO,
               J + V3(lado*1.6,-0.35,0.45))
@@ -1057,10 +1035,10 @@ local function atualizarCabeca(dt)
         if mc then
             local rel = S.boneca.hrp.CFrame:PointToObjectSpace(mc.Position)
             local dist = rel.Magnitude
-            if dist > 0.3 and dist < 7.5 then
+            if dist > 0.3 and dist < 6.5 then
                 yaw = -deg(atan2(rel.X, -rel.Z))
                 pitch = deg(atan2(rel.Y, math.max(0.01, sqrt(rel.X^2+rel.Z^2))))
-                local k = clamp((7.5-dist)/3.0, 0, 1)
+                local k = clamp((6.5-dist)/3.0, 0, 1)
                 yaw, pitch = yaw*k, pitch*k
             end
         end
@@ -1154,7 +1132,7 @@ eventoRaiva = function()
         aura.Transparency=0.55; aura.Anchored,aura.CanCollide,aura.Massless=true,false,true
         aura.CanQuery=false; aura.CFrame=hrp.CFrame; aura.Parent=WS; S.aura=aura
         local bb=Instance.new("BillboardGui")
-        bb.Size=UDim2.new(0,130,0,30); bb.AlwaysOnTop=true; bb.StudsOffset=V3(0,4.2,0); bb.Parent=hrp
+        bb.Size=UDim2.new(0,130,0,30); bb.AlwaysOnTop=true; bb.StudsOffset=V3(0,4.0,0); bb.Parent=hrp
         local l=Instance.new("TextLabel")
         l.Size=UDim2.new(1,0,1,0); l.BackgroundTransparency=1; l.Text=">_<  RAIVA!"
         l.TextColor3=Color3.fromRGB(255,80,80); l.TextStrokeTransparency=0.4
@@ -1276,7 +1254,7 @@ local function ligarLoop()
             if S.precumW and S.precumW.Parent then
                 S.precumW.C0 = S.precumBase * CFrame.new(0, 0, -0.02 - S.ereccao*0.04)
                 S.precum.Transparency = 1 - S.ereccao*0.85
-                S.precum.Size = V3(0.12,0.14,0.12)*(0.6+S.ereccao*0.8)
+                S.precum.Size = V3(0.13,0.15,0.13)*(0.6+S.ereccao*0.8)
             end
 
             S.babaT = S.babaT + dt
@@ -1327,11 +1305,11 @@ local function ligarLoop()
             local gy = chaoEm(px, pz, hrpJ.Position.Y)
             S.boneca.hrp.CFrame = CFrame.new(px, gy+ALT_ROOT, pz)*baseRot*P(0,180,0)*CFrame.new(0,br*0.015,0)
             setMotores({ mot=POSES[4].mot })
-            local meuTorso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+            local meuTorso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
             if meuTorso then
                 local rel = S.boneca.hrp.CFrame:PointToObjectSpace(meuTorso.Position)
                 for _, lado in ipairs({-1,1}) do
-                    local nm = lado>0 and "D" or "E"
+                    local nm = lado>0 and "R" or "L"
                     local T = V3(rel.X + lado*0.42, rel.Y + 0.30 + sin(t*1.3+lado)*0.08, rel.Z + 0.10)
                     setIK(S.boneca.motores["braco"..nm], S.boneca.motores["cotovelo"..nm],
                           V3(lado*0.80,0.72,0), T, LEN_BRACO, LEN_ANTEBRACO, V3(lado*1.5,0.1,0.5))
@@ -1342,16 +1320,16 @@ local function ligarLoop()
             local px = hrpJ.Position.X + flat.X*2.6
             local pz = hrpJ.Position.Z + flat.Z*2.6
             local gy = chaoEm(px, pz, hrpJ.Position.Y)
-            S.boneca.hrp.CFrame = CFrame.new(px, gy+1.20, pz)*baseRot*P(0,180,0)*CFrame.new(0,br*0.02,0)
+            S.boneca.hrp.CFrame = CFrame.new(px, gy+0.95, pz)*baseRot*P(0,180,0)*CFrame.new(0,br*0.02,0)
             local PM = { raiz=P(-14,0,0), cabeca=P(16,0,0),
-                         quadrilE=P(88,0,-30), quadrilD=P(88,0,30),
-                         joelhoE=P(-84,0,0), joelhoD=P(-84,0,0),
-                         bracoE=P(60,0,-26), bracoD=P(18,0,10),
-                         cotoveloE=P(-70,0,0), cotoveloD=P(-30,0,0) }
+                         quadrilL=P(88,0,-30), quadrilR=P(88,0,30),
+                         joelhoL=P(-84,0,0), joelhoR=P(-84,0,0),
+                         bracoL=P(60,0,-26), bracoR=P(18,0,10),
+                         cotoveloL=P(-70,0,0), cotoveloR=P(-30,0,0) }
             setMotores({ mot=PM, extraCab=P(-2*br,0,0) })
             local dedo = 0.5 + sin(t*3.4)*0.5
-            setIK(S.boneca.motores.bracoD, S.boneca.motores.cotoveloD, V3(0.80,0.72,0),
-                  V3(0.10, -0.62, -0.62 - dedo*0.16), LEN_BRACO, LEN_ANTEBRACO, V3(2.1,-0.1,0.6))
+            setIK(S.boneca.motores.bracoR, S.boneca.motores.cotoveloR, V3(0.80,0.72,0),
+                  V3(0.10, -0.32, -0.62 - dedo*0.16), LEN_BRACO, LEN_ANTEBRACO, V3(2.1,-0.1,0.6))
             for _, d in ipairs(S.dedos) do
                 if d.w.Parent then d.w.C0 = d.base * P(38 + dedo*10, 0, 0) end
             end
@@ -1424,18 +1402,18 @@ end
 local function capturarEstado()
     return { boneca=S.boneca, jigs=S.jigs, peleParts=S.peleParts, nips=S.nips,
              particulas=S.particulas, roupa=S.roupa, dedos=S.dedos, olhos=S.olhos,
-             palpebras=S.palpebras, seios=S.seios, bundas=S.bundas, clit=S.clit, canal=S.canal }
+             palpebras=S.palpebras, seios=S.seios, clit=S.clit, canal=S.canal }
 end
 local function restaurarEstado(t)
     S.boneca=t.boneca; S.jigs=t.jigs; S.peleParts=t.peleParts; S.nips=t.nips
     S.particulas=t.particulas; S.roupa=t.roupa; S.dedos=t.dedos; S.olhos=t.olhos
-    S.palpebras=t.palpebras; S.seios=t.seios; S.bundas=t.bundas; S.clit=t.clit; S.canal=t.canal
+    S.palpebras=t.palpebras; S.seios=t.seios; S.clit=t.clit; S.canal=t.canal
 end
 
 criarDollRemota = function(plr)
     local salvo = capturarEstado()
-    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.bundas,S.marcas =
-        {},{},{},{},{},{},{},{},{},{},{}
+    S.jigs,S.peleParts,S.nips,S.particulas,S.roupa,S.dedos,S.olhos,S.palpebras,S.seios,S.marcas =
+        {},{},{},{},{},{},{},{},{},{}
     local ok, err = pcall(criarBoneca)
     if not ok then logErr("dollRemota", err) end
     local doll = S.boneca
@@ -1561,9 +1539,9 @@ local function morder()
         local s = S.seios[rnd(2)] or S.seios[1]
         if s then mordida(s.p, CFrame.new(0, RAIO_SEIO*0.35, -RAIO_SEIO*0.95), 0.10) end
     elseif S.mordidaAlvo == "bunda" then
-        mordida(b.tronco, CFrame.new((rnd()<0.5 and -1 or 1)*0.40, -0.60, 0.92), 0.13)
+        mordida(b.tronco, CFrame.new((rnd()<0.5 and -1 or 1)*0.40, -0.42, 0.90), 0.13)
     elseif S.mordidaAlvo == "coxa" then
-        mordida(b.tronco, CFrame.new(0.48, -1.20, -0.30), 0.12)
+        mordida(b.tronco, CFrame.new(0.48, -1.10, -0.30), 0.12)
     else
         mordida(b.cabeca, CFrame.new((rnd()<0.5 and -1 or 1)*0.55, -0.30, -0.10), 0.10)
     end
@@ -1571,7 +1549,7 @@ end
 
 print("[VB] 5 - controle ok")
 
---==================== GUI ====================
+--==================== GUI (ABAS) ====================
 local function montarGUI()
     local pg = LP:WaitForChild("PlayerGui")
     local okH, h = pcall(function() return gethui and gethui() or nil end)
@@ -1591,9 +1569,10 @@ local function montarGUI()
     local OKC=Color3.fromRGB(52,122,92)
     local ALT=Color3.fromRGB(78,52,108)
     local ABA=Color3.fromRGB(30,24,40)
+    local ABAON=Color3.fromRGB(255,96,160)
 
     local main=Instance.new("Frame")
-    main.Size=UDim2.new(0,252,0,462); main.Position=UDim2.new(0,14,0,70)
+    main.Size=UDim2.new(0,254,0,468); main.Position=UDim2.new(0,14,0,70)
     main.BackgroundColor3=Color3.fromRGB(18,15,23); main.BackgroundTransparency=0.05
     main.BorderSizePixel=0; main.Active=true; main.ClipsDescendants=true; main.Parent=gui
     local cM=Instance.new("UICorner"); cM.CornerRadius=UDim.new(0,10); cM.Parent=main
@@ -1601,8 +1580,8 @@ local function montarGUI()
 
     local barra=Instance.new("TextButton")
     barra.Size=UDim2.new(1,0,0,26); barra.BackgroundColor3=ROSA; barra.BackgroundTransparency=0.15
-    barra.BorderSizePixel=0; barra.Text="   VENICE BONECA v8.0 R15"; barra.TextColor3=Color3.new(1,1,1)
-    barra.TextSize=11; barra.Font=Enum.Font.GothamBold; barra.TextXAlignment=Enum.TextXAlignment.Left
+    barra.BorderSizePixel=0; barra.Text="   VENICE BONECA v8.2 R15"; barra.TextColor3=Color3.new(1,1,1)
+    barra.TextSize=12; barra.Font=Enum.Font.GothamBold; barra.TextXAlignment=Enum.TextXAlignment.Left
     barra.AutoButtonColor=false; barra.Parent=main
     local cB=Instance.new("UICorner"); cB.CornerRadius=UDim.new(0,10); cB.Parent=barra
     local btnMin=Instance.new("TextButton")
@@ -1735,7 +1714,7 @@ local function montarGUI()
     construtores["GERAL"] = function()
         botao("SPAWN BONECA", OKC, function()
             local ok, err = pcall(criarBoneca)
-            if ok and S.boneca then aviso("Boneca R15 criada!") else aviso("ERRO: "..tostring(err), true) end
+            if ok and S.boneca then aviso("Boneca criada!") else aviso("ERRO: "..tostring(err), true) end
         end)
         local bSexo
         bSexo=botao("SEXO: OFF", BTN, function()
@@ -1750,7 +1729,7 @@ local function montarGUI()
         end)
         botao("PRELIMINARES", ALT, function()
             local ok,err = pcall(iniciarPrelim)
-            if ok then aviso("Preliminares... deixa ela te puxar") else aviso("ERRO: "..tostring(err), true) end
+            if ok then aviso("Preliminares...") else aviso("ERRO: "..tostring(err), true) end
         end)
         botao("CHUPAR ELA", ALT, function()
             S.poseIdx = acharPose("Chupando ela") or S.poseIdx
@@ -1760,7 +1739,9 @@ local function montarGUI()
             aviso("Lambendo ela...")
         end)
         botao("SPAWN CAMA", ALT, function()
-            criarLeito((S.boneca and S.boneca.hrp.Position.Y or 3.6) - 2.1, 0)
+            local _, yaw = (CFrame.lookAt(V3(), V3(0,0,-1))):ToEulerAnglesYXZ()
+            S.ancoraPos = S.boneca and S.boneca.hrp.Position or V3(0,3,0)
+            criarLeito((S.ancoraPos.Y - 1.6), yaw)
             aviso("Cama criada")
         end)
         botao("FORCAR RAIVA (rasga tudo)", Color3.fromRGB(150,52,52), function()
@@ -1773,32 +1754,6 @@ local function montarGUI()
         botao("REMOVER TUDO", Color3.fromRGB(138,48,72), function()
             limparTudo(); aviso("Tudo removido")
         end)
-    end
-
-    construtores["CORPO"] = function()
-        rotulo("CAIMENTO (peito e bunda)")
-        local r0=linha()
-        b2(r0,"CAIMENTO -", function()
-            S.sag=math.max(0, S.sag-0.08); aplicarCorpo(); aviso("Caimento "..math.floor(S.sag*100).."%")
-        end)
-        b2(r0,"CAIMENTO +", function()
-            S.sag=math.min(1, S.sag+0.08); aplicarCorpo(); aviso("Caimento "..math.floor(S.sag*100).."%")
-        end)
-        local r0b=linha()
-        b2(r0b,"DURINHOS (0%)", function() S.sag=0.10; aplicarCorpo(); aviso("Quase durinhos") end)
-        b2(r0b,"BEM CAIDOS (100%)", function() S.sag=1.00; aplicarCorpo(); aviso("Bem caidos") end)
-        rotulo("TAMANHO DO PEITO")
-        local r1=linha()
-        b2(r1,"PEITO -", function() S.tamPeito=math.max(0.5,S.tamPeito-0.08); aplicarCorpo(); aviso("Peito") end)
-        b2(r1,"PEITO +", function() S.tamPeito=math.min(2.0,S.tamPeito+0.08); aplicarCorpo(); aviso("Peito") end)
-        rotulo("TAMANHO DA BUNDA")
-        local r2=linha()
-        b2(r2,"BUNDA -", function() S.tamBunda=math.max(0.5,S.tamBunda-0.08); aplicarCorpo(); aviso("Bunda") end)
-        b2(r2,"BUNDA +", function() S.tamBunda=math.min(2.0,S.tamBunda+0.08); aplicarCorpo(); aviso("Bunda") end)
-        rotulo("QUADRIL")
-        local r3=linha()
-        b2(r3,"ESTREITO", function() S.largQuadril=math.max(0.7,S.largQuadril-0.06); aplicarCorpo(); aviso("Quadril") end)
-        b2(r3,"LARGO", function() S.largQuadril=math.min(1.4,S.largQuadril+0.06); aplicarCorpo(); aviso("Quadril") end)
     end
 
     construtores["POSICAO"] = function()
@@ -1843,7 +1798,6 @@ local function montarGUI()
             if S.picaOn then criarPica() else removerPica() end
             bPica.Text="PICA: "..(S.picaOn and "ON" or "OFF")
             bPica.BackgroundColor3 = S.picaOn and ALT or BTN
-            aviso(S.picaOn and "Pica ON" or "Pica OFF")
         end)
         rotulo("ALTURA")
         local rY=linha()
@@ -1857,6 +1811,44 @@ local function montarGUI()
         local rG=linha()
         b2(rG,"FINA", function() S.gross=math.max(0.7,S.gross-0.10); if S.picaOn then removerPica(); criarPica() end; aviso("Gross") end)
         b2(rG,"GROSSA", function() S.gross=math.min(1.8,S.gross+0.10); if S.picaOn then removerPica(); criarPica() end; aviso("Gross") end)
+    end
+
+    construtores["CORPO"] = function()
+        rotulo("CAIMENTO PEITO/BUNDA")
+        local rC=linha()
+        b2(rC,"MENOS CAIDOS", function()
+            S.caimento = math.max(0, (S.caimento or 0.5) - 0.15)
+            if S.boneca then criarBoneca(); S.ancoraOk=false end
+            aviso("Caimento "..math.floor(S.caimento*100).."%")
+        end)
+        b2(rC,"MAIS CAIDOS", function()
+            S.caimento = math.min(1, (S.caimento or 0.5) + 0.15)
+            if S.boneca then criarBoneca(); S.ancoraOk=false end
+            aviso("Caimento "..math.floor(S.caimento*100).."%")
+        end)
+        botao("CAIMENTO: "..math.floor((S.caimento or 0.5)*100).."%  (RESET 50%)", BTN, function()
+            S.caimento = 0.5
+            if S.boneca then criarBoneca(); S.ancoraOk=false end
+            aviso("Caimento 50%")
+        end)
+        rotulo("MAOS")
+        dropdown("MAOS: Livre", {"Livre","Agarrar peito","Agarrar bunda","Cobrir"}, function(n)
+            S.maos = ({Livre="livre",["Agarrar peito"]="peito",["Agarrar bunda"]="bunda",Cobrir="cobrir"})[n]
+            if n=="Agarrar peito" and S.boneca then
+                for _,s in ipairs(S.seios) do marcasDedo(s.p, CFrame.new(0, RAIO_SEIO*0.30, -RAIO_SEIO*1.0)) end
+            end
+            aviso("Maos: "..n)
+        end)
+        rotulo("MARCAS")
+        dropdown("MORDER: "..S.mordidaAlvo, {"ombro","peito","bunda","coxa"}, function(n)
+            S.mordidaAlvo=n; aviso("Morder: "..n)
+        end)
+        local rM=linha()
+        b2(rM,"MORDER", function() morder(); aviso("Mordeu o "..S.mordidaAlvo) end)
+        b2(rM,"LIMPAR MARCAS", function()
+            for _,m in ipairs(S.marcas) do pcall(function() m:Destroy() end) end
+            S.marcas={}; aviso("Marcas limpas")
+        end)
     end
 
     construtores["ROUPA"] = function()
@@ -1894,26 +1886,6 @@ local function montarGUI()
                 if temR(n) then rasgarRoupa(n); aviso("Rasgou "..n); return end
             end
             aviso("Nada pra rasgar")
-        end)
-    end
-
-    construtores["MARCAS"] = function()
-        dropdown("MORDER: "..S.mordidaAlvo, {"ombro","peito","bunda","coxa"}, function(n)
-            S.mordidaAlvo=n; aviso("Morder: "..n)
-        end)
-        local r=linha()
-        b2(r,"MORDER", function() morder(); aviso("Mordeu o "..S.mordidaAlvo) end)
-        b2(r,"LIMPAR MARCAS", function()
-            for _,m in ipairs(S.marcas) do pcall(function() m:Destroy() end) end
-            S.marcas={}; aviso("Marcas limpas")
-        end)
-        rotulo("MAOS")
-        dropdown("MAOS: Livre", {"Livre","Agarrar peito","Agarrar bunda","Cobrir"}, function(n)
-            S.maos = ({Livre="livre",["Agarrar peito"]="peito",["Agarrar bunda"]="bunda",Cobrir="cobrir"})[n]
-            if n=="Agarrar peito" and S.boneca then
-                for _,s in ipairs(S.seios) do marcasDedo(s.p, CFrame.new(0, RAIO_SEIO*0.30, -RAIO_SEIO*1.0)) end
-            end
-            aviso("Maos: "..n)
         end)
     end
 
@@ -1955,11 +1927,13 @@ local function montarGUI()
         end)
     end
 
-    local ordemAbas = {"GERAL","CORPO","POSICAO","PICA","ROUPA","MARCAS","AUTO","REAL"}
+    local ordemAbas = {"GERAL","POSICAO","PICA","CORPO","ROUPA","AUTO","REAL"}
+    local abaAtual = nil
 
     local function abrir(nome)
+        abaAtual = nome
         for n,b in pairs(abasBotoes) do
-            b.BackgroundColor3 = (n==nome) and ROSA or ABA
+            b.BackgroundColor3 = (n==nome) and ABAON or ABA
             b.TextColor3 = (n==nome) and Color3.new(1,1,1) or Color3.fromRGB(235,230,245)
         end
         limpar()
@@ -1973,7 +1947,7 @@ local function montarGUI()
 
     for _,nome in ipairs(ordemAbas) do
         local b=Instance.new("TextButton")
-        b.Size=UDim2.new(0,29,1,0); b.BackgroundColor3=ABA; b.BorderSizePixel=0
+        b.Size=UDim2.new(0,34,1,0); b.BackgroundColor3=ABA; b.BorderSizePixel=0
         b.Text=nome; b.TextColor3=Color3.fromRGB(235,230,245)
         b.TextSize=8; b.Font=Enum.Font.GothamBold; b.Parent=barraAbas
         local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,5); c.Parent=b
@@ -1998,7 +1972,7 @@ local function montarGUI()
     local mini=false
     btnMin.MouseButton1Click:Connect(function()
         mini=not mini; corpo.Visible=not mini; barraAbas.Visible=not mini
-        main.Size = mini and UDim2.new(0,252,0,26) or UDim2.new(0,252,0,462)
+        main.Size = mini and UDim2.new(0,254,0,26) or UDim2.new(0,254,0,468)
         btnMin.Text = mini and "+" or "-"
     end)
 
@@ -2016,14 +1990,15 @@ else
     f.Size=UDim2.new(0,300,0,60); f.Position=UDim2.new(0,20,0,100)
     f.BackgroundColor3=Color3.fromRGB(120,20,40); f.Parent=pg
     local t=Instance.new("TextLabel"); t.Size=UDim2.new(1,0,1,0); t.BackgroundTransparency=1
-    t.Text="VB erro: "..tostring(guiErr); t.TextScaled=true; t.TextColor3=Color3.new(1,1,1); t.Parent=f
+    t.Text="VB erro: "..tostring(guiErr); t.TextScaled=true; t.TextWrapped=true
+    t.TextColor3=Color3.new(1,1,1); t.Parent=f
 end
 
 --==================== INIT ====================
 task.spawn(function()
     ligarLoop()
     task.wait(0.4)
-    if aviso then aviso("Pronto! GERAL -> SPAWN -> SEXO") end
+    if aviso then aviso("Pronto! GERAL -> SPAWN BONECA -> SEXO") end
 end)
 task.spawn(function()
     while true do
